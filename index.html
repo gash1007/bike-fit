@@ -1,240 +1,1013 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bike Fit Assistant AI (Debug Ver.)</title>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-    
+    <title>手机摄像头自行车动态拟合系统</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/posenet"></script>
     <style>
-        body { font-family: 'Arial', sans-serif; background-color: #1e1e1e; color: white; margin: 0; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
-        h2 { margin: 10px 0; font-size: 1.2rem; text-align: center; }
+        :root {
+            --primary: #3498db;
+            --secondary: #2ecc71;
+            --danger: #e74c3c;
+            --warning: #f39c12;
+            --dark: #2c3e50;
+            --light: #ecf0f1;
+            --gray: #95a5a6;
+        }
         
-        .container { position: relative; width: 100%; max-width: 640px; height: 50vh; background: #000; border-radius: 10px; overflow: hidden; margin-bottom: 10px; }
-        video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; display: none; } /* 隱藏原始影像，只顯示 canvas */
-        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
         
-        /* 控制區 */
-        .controls { width: 90%; max-width: 640px; margin-bottom: 10px; display: flex; gap: 10px; }
-        button { flex: 1; padding: 12px; border: none; border-radius: 5px; font-size: 1rem; cursor: pointer; font-weight: bold; }
-        #btn-start { background-color: #00d4ff; color: #000; }
-        #btn-reset { background-color: #ff4757; color: white; }
+        body {
+            background-color: #f5f7fa;
+            color: var(--dark);
+            line-height: 1.6;
+        }
         
-        /* 數據儀表板 */
-        .dashboard { width: 100%; max-width: 640px; background: #333; padding: 10px; border-radius: 8px; display: flex; flex-wrap: wrap; justify-content: space-around; }
-        .metric { text-align: center; width: 45%; margin: 5px 0; }
-        .metric-value { font-size: 1.5rem; font-weight: bold; color: #fff; }
-        .metric-label { font-size: 0.8rem; color: #aaa; }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
         
-        /* 錯誤訊息顯示區 */
-        #error-log { color: #ff4757; font-size: 0.9rem; padding: 10px; text-align: center; width: 90%; word-break: break-all; }
+        header {
+            text-align: center;
+            padding: 30px 0;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
         
-        /* 建議區 */
-        .advice { width: 90%; max-width: 640px; margin-top: 10px; background: #444; padding: 10px; border-radius: 8px; font-size: 0.9rem; color: #ddd; }
+        h1 {
+            font-size: 2.2rem;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 25px;
+            margin-bottom: 25px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+        }
+        
+        .card-title {
+            font-size: 1.5rem;
+            margin-bottom: 20px;
+            color: var(--primary);
+            border-bottom: 2px solid var(--light);
+            padding-bottom: 10px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        
+        input, select {
+            width: 100%;
+            padding: 12px 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 1rem;
+            transition: border 0.3s ease;
+        }
+        
+        input:focus, select:focus {
+            border-color: var(--primary);
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+        }
+        
+        .btn {
+            display: inline-block;
+            background: var(--primary);
+            color: white;
+            padding: 12px 25px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 600;
+            transition: background 0.3s ease, transform 0.2s ease;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .btn:hover {
+            background: #2980b9;
+            transform: translateY(-2px);
+        }
+        
+        .btn-secondary {
+            background: var(--secondary);
+        }
+        
+        .btn-secondary:hover {
+            background: #27ae60;
+        }
+        
+        .btn-danger {
+            background: var(--danger);
+        }
+        
+        .btn-danger:hover {
+            background: #c0392b;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 25px;
+        }
+        
+        .video-container {
+            position: relative;
+            width: 100%;
+            margin-bottom: 20px;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        #video {
+            width: 100%;
+            height: auto;
+            background: #000;
+            border-radius: 10px;
+        }
+        
+        #output {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        
+        .camera-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .result-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 15px;
+            background: var(--light);
+            border-radius: 5px;
+            margin-bottom: 10px;
+        }
+        
+        .result-label {
+            font-weight: 600;
+        }
+        
+        .result-value {
+            color: var(--primary);
+            font-weight: 700;
+        }
+        
+        .recommendation {
+            padding: 15px;
+            background: #fff9e6;
+            border-left: 4px solid var(--warning);
+            margin-bottom: 15px;
+            border-radius: 0 5px 5px 0;
+        }
+        
+        .angle-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        
+        .angle-table th, .angle-table td {
+            padding: 12px 15px;
+            text-align: center;
+            border: 1px solid #ddd;
+        }
+        
+        .angle-table th {
+            background: var(--primary);
+            color: white;
+        }
+        
+        .angle-table tr:nth-child(even) {
+            background: #f9f9f9;
+        }
+        
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #ddd;
+            flex-wrap: wrap;
+        }
+        
+        .tab {
+            padding: 12px 20px;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s ease;
+        }
+        
+        .tab.active {
+            border-bottom: 3px solid var(--primary);
+            color: var(--primary);
+            font-weight: 600;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .status {
+            padding: 10px 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
+        
+        .status-loading {
+            background: #e8f4fd;
+            color: var(--primary);
+        }
+        
+        .status-success {
+            background: #e8f6f3;
+            color: var(--secondary);
+        }
+        
+        .status-error {
+            background: #fdedec;
+            color: var(--danger);
+        }
+        
+        .pose-keypoints {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        .keypoint {
+            display: inline-block;
+            padding: 5px 10px;
+            background: var(--light);
+            border-radius: 20px;
+            font-size: 0.9rem;
+        }
+        
+        footer {
+            text-align: center;
+            padding: 30px 0;
+            margin-top: 50px;
+            color: var(--gray);
+            border-top: 1px solid #ddd;
+        }
+        
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+            
+            h1 {
+                font-size: 1.8rem;
+            }
+            
+            .card {
+                padding: 15px;
+            }
+            
+            .tabs {
+                flex-direction: column;
+            }
+            
+            .tab {
+                text-align: center;
+            }
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 10px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .hidden {
+            display: none;
+        }
     </style>
 </head>
 <body>
-
-    <h2>🚴 Bike Fit AI V2</h2>
-
-    <div class="controls">
-        <button id="btn-start" onclick="startCamera()">📸 開啟相機</button>
-        <button id="btn-reset" onclick="resetData()">🔄 重置數據</button>
-    </div>
-    
-    <div id="error-log"></div>
-
     <div class="container">
-        <video id="input_video" playsinline muted></video>
-        <canvas id="output_canvas"></canvas>
-    </div>
-
-    <div class="dashboard">
-        <div class="metric">
-            <div class="metric-label">膝蓋角度</div>
-            <div class="metric-value" id="val-knee">--</div>
+        <header>
+            <h1>手机摄像头自行车动态拟合系统</h1>
+            <p class="subtitle">使用AI姿态估计进行精准自行车动态拟合分析</p>
+        </header>
+        
+        <div class="tabs">
+            <div class="tab active" data-tab="basic">基本测量</div>
+            <div class="tab" data-tab="camera">动态捕捉</div>
+            <div class="tab" data-tab="results">拟合结果</div>
         </div>
-        <div class="metric">
-            <div class="metric-label">最大延伸 (下死點)</div>
-            <div class="metric-value" style="color: #00ff88;" id="val-max-knee">--</div>
+        
+        <div class="tab-content active" id="basic-tab">
+            <div class="card">
+                <h2 class="card-title">身体测量数据</h2>
+                <form id="measurement-form">
+                    <div class="grid">
+                        <div class="form-group">
+                            <label for="height">身高 (cm)</label>
+                            <input type="number" id="height" min="100" max="250" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="inseam">胯高 (内腿长) (cm)</label>
+                            <input type="number" id="inseam" min="50" max="150" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="torso">躯干长度 (cm)</label>
+                            <input type="number" id="torso" min="30" max="100" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="arm-length">手臂长度 (cm)</label>
+                            <input type="number" id="arm-length" min="40" max="100" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="bike-type">自行车类型</label>
+                            <select id="bike-type" required>
+                                <option value="road">公路自行车</option>
+                                <option value="mountain">山地自行车</option>
+                                <option value="hybrid">混合自行车</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="flexibility">身体灵活性</label>
+                            <select id="flexibility" required>
+                                <option value="low">较低</option>
+                                <option value="medium" selected>中等</option>
+                                <option value="high">较高</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn">计算基本拟合</button>
+                </form>
+            </div>
+            
+            <div class="card">
+                <h2 class="card-title">基本拟合结果</h2>
+                <div id="basic-results">
+                    <p>请输入您的身体测量数据并点击"计算基本拟合"按钮</p>
+                </div>
+            </div>
         </div>
-        <div class="metric">
-            <div class="metric-label">軀幹角度</div>
-            <div class="metric-value" id="val-torso">--</div>
+        
+        <div class="tab-content" id="camera-tab">
+            <div class="card">
+                <h2 class="card-title">动态捕捉分析</h2>
+                <p>使用手机摄像头捕捉您的骑行姿势。请确保：</p>
+                <ul style="margin: 10px 0 20px 20px;">
+                    <li>在光线充足的环境下使用</li>
+                    <li>侧身站立，使摄像头能看到您的全身侧面</li>
+                    <li>穿着紧身衣物以便更准确识别关节点</li>
+                    <li>模拟骑行姿势或使用静态自行车</li>
+                </ul>
+                
+                <div class="status status-loading" id="model-status">
+                    <span class="loading"></span>正在加载AI姿态估计模型...
+                </div>
+                
+                <div class="camera-controls">
+                    <button id="start-camera" class="btn">启动摄像头</button>
+                    <button id="stop-camera" class="btn btn-danger" disabled>停止摄像头</button>
+                    <button id="capture-pose" class="btn btn-secondary" disabled>捕捉姿势</button>
+                    <button id="analyze-pose" class="btn" disabled>分析姿势</button>
+                </div>
+                
+                <div class="video-container">
+                    <video id="video" autoplay playsinline></video>
+                    <canvas id="output"></canvas>
+                </div>
+                
+                <div id="pose-results">
+                    <p>姿势分析结果将显示在这里</p>
+                </div>
+            </div>
         </div>
-        <div class="metric">
-            <div class="metric-label">平均軀幹角</div>
-            <div class="metric-value" style="color: #ffeb3b;" id="val-avg-torso">--</div>
+        
+        <div class="tab-content" id="results-tab">
+            <div class="card">
+                <h2 class="card-title">完整拟合报告</h2>
+                <div id="full-report">
+                    <p>完整的拟合报告将显示在这里</p>
+                </div>
+            </div>
         </div>
-    </div>
-
-    <div class="advice" id="advice-text">
-        點擊上方「開啟相機」按鈕開始。請給予相機權限。
+        
+        <footer>
+            <p>手机摄像头自行车动态拟合系统 &copy; 2023 | 基于TensorFlow.js PoseNet技术</p>
+        </footer>
     </div>
 
     <script>
-        const videoElement = document.getElementById('input_video');
-        const canvasElement = document.getElementById('output_canvas');
-        const canvasCtx = canvasElement.getContext('2d');
-        const errorLog = document.getElementById('error-log');
-        const btnStart = document.getElementById('btn-start');
-
-        let pose;
-        let cameraRunning = false;
-        let animationId;
-
-        // 數據變數
-        let maxKneeAngle = 0;
-        let torsoAngleSum = 0;
-        let torsoCount = 0;
-
-        function logError(msg) {
-            errorLog.innerText = "⚠️ " + msg;
-            console.error(msg);
-        }
-
-        function resetData() {
-            maxKneeAngle = 0;
-            torsoAngleSum = 0;
-            torsoCount = 0;
-            document.getElementById('val-max-knee').innerText = "--";
-            document.getElementById('val-avg-torso').innerText = "--";
-            document.getElementById('advice-text').innerText = "數據已重置";
-        }
-
-        // 核心運算迴圈
-        async function predict() {
-            if (!cameraRunning) return;
-
-            // 確保影片有載入
-            if (videoElement.readyState === 4) {
-                // 設定 Canvas 大小
-                canvasElement.width = videoElement.videoWidth;
-                canvasElement.height = videoElement.videoHeight;
+        // 全局变量
+        let videoStream = null;
+        let poseNet = null;
+        let poses = [];
+        let isModelLoaded = false;
+        let isCameraOn = false;
+        let capturedPose = null;
+        
+        // 切换标签页
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                // 移除所有active类
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
                 
-                // 送入 MediaPipe 處理
-                await pose.send({image: videoElement});
-            }
-            
-            // 繼續下一幀
-            animationId = requestAnimationFrame(predict);
-        }
-
-        async function startCamera() {
-            if (cameraRunning) return;
-            errorLog.innerText = "正在啟動相機...";
-            
-            try {
-                // 初始化 MediaPipe
-                if (!pose) {
-                    pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
-                    pose.setOptions({
-                        modelComplexity: 1,
-                        smoothLandmarks: true,
-                        minDetectionConfidence: 0.5,
-                        minTrackingConfidence: 0.5
-                    });
-                    pose.onResults(onResults);
+                // 添加active类到当前标签
+                tab.classList.add('active');
+                const tabId = tab.getAttribute('data-tab') + '-tab';
+                document.getElementById(tabId).classList.add('active');
+                
+                // 如果切换到摄像头标签且模型未加载，则加载模型
+                if (tabId === 'camera-tab' && !isModelLoaded) {
+                    loadPoseNetModel();
                 }
-
-                // 原生 getUserMedia 呼叫 (比 Camera Utils 更穩定)
-                const stream = await navigator.mediaDevices.getUserMedia({
+            });
+        });
+        
+        // 处理表单提交
+        document.getElementById('measurement-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            calculateBasicFitting();
+        });
+        
+        // 摄像头控制
+        document.getElementById('start-camera').addEventListener('click', startCamera);
+        document.getElementById('stop-camera').addEventListener('click', stopCamera);
+        document.getElementById('capture-pose').addEventListener('click', capturePose);
+        document.getElementById('analyze-pose').addEventListener('click', analyzePose);
+        
+        // 加载PoseNet模型
+        async function loadPoseNetModel() {
+            try {
+                document.getElementById('model-status').className = 'status status-loading';
+                document.getElementById('model-status').innerHTML = '<span class="loading"></span>正在加载AI姿态估计模型...';
+                
+                // 加载PoseNet模型
+                poseNet = await posenet.load({
+                    architecture: 'MobileNetV1',
+                    outputStride: 16,
+                    inputResolution: 257,
+                    multiplier: 0.75
+                });
+                
+                isModelLoaded = true;
+                document.getElementById('model-status').className = 'status status-success';
+                document.getElementById('model-status').textContent = '✓ AI姿态估计模型加载成功！';
+                
+                console.log('PoseNet模型加载成功');
+            } catch (error) {
+                console.error('PoseNet模型加载失败:', error);
+                document.getElementById('model-status').className = 'status status-error';
+                document.getElementById('model-status').textContent = '✗ AI姿态估计模型加载失败，请刷新页面重试';
+            }
+        }
+        
+        // 启动摄像头
+        async function startCamera() {
+            try {
+                const video = document.getElementById('video');
+                const output = document.getElementById('output');
+                
+                // 获取摄像头权限
+                videoStream = await navigator.mediaDevices.getUserMedia({ 
                     video: { 
-                        facingMode: 'environment', // 優先使用後鏡頭
+                        facingMode: 'environment',
                         width: { ideal: 640 },
                         height: { ideal: 480 }
-                    },
-                    audio: false
+                    }, 
+                    audio: false 
                 });
-
-                videoElement.srcObject = stream;
                 
-                // 等待影片載入
-                videoElement.onloadedmetadata = () => {
-                    videoElement.play();
-                    cameraRunning = true;
-                    btnStart.innerText = "相機運作中";
-                    btnStart.disabled = true;
-                    errorLog.innerText = "";
-                    predict(); // 開始迴圈
-                };
-
-            } catch (err) {
-                let msg = "相機啟動失敗: " + err.name;
-                if (err.name === 'NotAllowedError') msg = "您拒絕了相機權限，請重整網頁並允許。";
-                if (err.name === 'NotFoundError') msg = "找不到相機裝置。";
-                logError(msg + " (" + err.message + ")");
+                video.srcObject = videoStream;
+                
+                // 设置Canvas尺寸
+                output.width = video.videoWidth;
+                output.height = video.videoHeight;
+                
+                isCameraOn = true;
+                document.getElementById('start-camera').disabled = true;
+                document.getElementById('stop-camera').disabled = false;
+                document.getElementById('capture-pose').disabled = false;
+                document.getElementById('analyze-pose').disabled = false;
+                
+                // 开始姿态检测
+                detectPose();
+                
+            } catch (error) {
+                console.error('摄像头启动失败:', error);
+                alert('无法访问摄像头，请确保已授予摄像头权限并重试。');
             }
         }
-
-        function calculateAngle(a, b, c) {
-            let radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-            let angle = Math.abs(radians * 180.0 / Math.PI);
-            if (angle > 180.0) angle = 360 - angle;
-            return angle;
+        
+        // 停止摄像头
+        function stopCamera() {
+            if (videoStream) {
+                videoStream.getTracks().forEach(track => track.stop());
+                videoStream = null;
+            }
+            
+            const video = document.getElementById('video');
+            video.srcObject = null;
+            
+            isCameraOn = false;
+            document.getElementById('start-camera').disabled = false;
+            document.getElementById('stop-camera').disabled = true;
+            document.getElementById('capture-pose').disabled = true;
+            document.getElementById('analyze-pose').disabled = true;
+            
+            // 清空Canvas
+            const output = document.getElementById('output');
+            const ctx = output.getContext('2d');
+            ctx.clearRect(0, 0, output.width, output.height);
         }
-
-        function onResults(results) {
-            canvasCtx.save();
-            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-
-            if (results.poseLandmarks) {
-                drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
+        
+        // 姿态检测
+        async function detectPose() {
+            if (!isCameraOn || !poseNet) return;
+            
+            const video = document.getElementById('video');
+            const output = document.getElementById('output');
+            const ctx = output.getContext('2d');
+            
+            // 检测姿态
+            poses = await poseNet.estimatePoses(video, {
+                flipHorizontal: false,
+                maxDetections: 1,
+                scoreThreshold: 0.5,
+                nmsRadius: 20
+            });
+            
+            // 清空Canvas
+            ctx.clearRect(0, 0, output.width, output.height);
+            
+            // 绘制关键点
+            if (poses.length > 0) {
+                drawKeypoints(poses[0].keypoints, 0.5, ctx);
+                drawSkeleton(poses[0].keypoints, 0.5, ctx);
+            }
+            
+            // 继续检测
+            requestAnimationFrame(detectPose);
+        }
+        
+        // 绘制关键点
+        function drawKeypoints(keypoints, minConfidence, ctx, scale = 1) {
+            for (let i = 0; i < keypoints.length; i++) {
+                const keypoint = keypoints[i];
                 
-                // 取得關鍵點 (右側)
-                const p = results.poseLandmarks;
-                const rShoulder = p[12], rHip = p[24], rKnee = p[26], rAnkle = p[28];
-
-                // 檢查是否都在畫面中
-                if (rShoulder.visibility > 0.5 && rHip.visibility > 0.5 && rKnee.visibility > 0.5 && rAnkle.visibility > 0.5) {
-                    
-                    // 1. 膝蓋角度
-                    let kAngle = calculateAngle(rHip, rKnee, rAnkle);
-                    document.getElementById('val-knee').innerText = Math.round(kAngle) + "°";
-
-                    // 更新最大膝蓋角 (簡單濾波)
-                    if (kAngle > maxKneeAngle && kAngle < 175 && kAngle > 100) {
-                        maxKneeAngle = kAngle;
-                        document.getElementById('val-max-knee').innerText = Math.round(maxKneeAngle) + "°";
-                        updateAdvice();
-                    }
-
-                    // 2. 軀幹角度 (肩-髖-水平)
-                    // 虛擬水平點
-                    let tAngle = calculateAngle({x: rHip.x - 0.5, y: rHip.y}, rHip, rShoulder);
-                    document.getElementById('val-torso').innerText = Math.round(tAngle) + "°";
-
-                    // 計算平均軀幹角 (簡單平均)
-                    if (tAngle > 10 && tAngle < 100) {
-                        torsoAngleSum += tAngle;
-                        torsoCount++;
-                        let avgTorso = torsoAngleSum / torsoCount;
-                        document.getElementById('val-avg-torso').innerText = Math.round(avgTorso) + "°";
-                    }
-
-                    // 繪製文字
-                    canvasCtx.font = "24px Arial";
-                    canvasCtx.fillStyle = "#00ff88";
-                    canvasCtx.fillText(Math.round(kAngle) + "°", rKnee.x * canvasElement.width + 10, rKnee.y * canvasElement.height);
-                    
-                    canvasCtx.fillStyle = "#ffeb3b";
-                    canvasCtx.fillText(Math.round(tAngle) + "°", rHip.x * canvasElement.width + 10, rHip.y * canvasElement.height);
+                if (keypoint.score < minConfidence) {
+                    continue;
+                }
+                
+                const { y, x } = keypoint.position;
+                
+                ctx.beginPath();
+                ctx.arc(x, y, 4, 0, 2 * Math.PI);
+                ctx.fillStyle = 'red';
+                ctx.fill();
+            }
+        }
+        
+        // 绘制骨架
+        function drawSkeleton(keypoints, minConfidence, ctx, scale = 1) {
+            const adjacentKeyPoints = posenet.getAdjacentKeyPoints(keypoints, minConfidence);
+            
+            ctx.strokeStyle = 'green';
+            ctx.lineWidth = 2;
+            
+            adjacentKeyPoints.forEach((keypoints) => {
+                drawSegment(
+                    toTuple(keypoints[0].position), toTuple(keypoints[1].position), ctx, scale);
+            });
+        }
+        
+        // 绘制线段
+        function drawSegment([ay, ax], [by, bx], ctx, scale) {
+            ctx.beginPath();
+            ctx.moveTo(ax, ay);
+            ctx.lineTo(bx, by);
+            ctx.stroke();
+        }
+        
+        // 转换为元组
+        function toTuple({ y, x }) {
+            return [y, x];
+        }
+        
+        // 捕捉姿势
+        function capturePose() {
+            if (poses.length > 0) {
+                capturedPose = poses[0];
+                
+                // 显示捕捉到的关键点信息
+                displayCapturedPose();
+                
+                document.getElementById('analyze-pose').disabled = false;
+            } else {
+                alert('未检测到人体姿态，请确保全身在摄像头范围内且光线充足。');
+            }
+        }
+        
+        // 显示捕捉到的姿势
+        function displayCapturedPose() {
+            if (!capturedPose) return;
+            
+            let keypointsHTML = '<h3>捕捉到的身体关键点</h3><div class="pose-keypoints">';
+            
+            // 只显示高置信度的关键点
+            capturedPose.keypoints.forEach(keypoint => {
+                if (keypoint.score > 0.5) {
+                    keypointsHTML += `<div class="keypoint">${keypoint.part}: ${(keypoint.score * 100).toFixed(1)}%</div>`;
+                }
+            });
+            
+            keypointsHTML += '</div>';
+            
+            document.getElementById('pose-results').innerHTML = keypointsHTML;
+        }
+        
+        // 分析姿势
+        function analyzePose() {
+            if (!capturedPose) {
+                alert('请先捕捉姿势');
+                return;
+            }
+            
+            // 计算关键角度
+            const angles = calculatePoseAngles(capturedPose.keypoints);
+            
+            // 显示分析结果
+            displayPoseAnalysis(angles);
+            
+            // 生成拟合建议
+            generateFittingSuggestions(angles);
+        }
+        
+        // 计算姿势角度
+        function calculatePoseAngles(keypoints) {
+            const angles = {};
+            
+            // 获取关键点坐标
+            const leftShoulder = findKeypoint(keypoints, 'leftShoulder');
+            const leftElbow = findKeypoint(keypoints, 'leftElbow');
+            const leftWrist = findKeypoint(keypoints, 'leftWrist');
+            const rightShoulder = findKeypoint(keypoints, 'rightShoulder');
+            const rightElbow = findKeypoint(keypoints, 'rightElbow');
+            const rightWrist = findKeypoint(keypoints, 'rightWrist');
+            const leftHip = findKeypoint(keypoints, 'leftHip');
+            const rightHip = findKeypoint(keypoints, 'rightHip');
+            const leftKnee = findKeypoint(keypoints, 'leftKnee');
+            const rightKnee = findKeypoint(keypoints, 'rightKnee');
+            const leftAnkle = findKeypoint(keypoints, 'leftAnkle');
+            const rightAnkle = findKeypoint(keypoints, 'rightAnkle');
+            
+            // 计算肘部角度
+            if (leftShoulder && leftElbow && leftWrist) {
+                angles.leftElbow = calculateAngle(leftShoulder, leftElbow, leftWrist);
+            }
+            
+            if (rightShoulder && rightElbow && rightWrist) {
+                angles.rightElbow = calculateAngle(rightShoulder, rightElbow, rightWrist);
+            }
+            
+            // 计算膝盖角度
+            if (leftHip && leftKnee && leftAnkle) {
+                angles.leftKnee = calculateAngle(leftHip, leftKnee, leftAnkle);
+            }
+            
+            if (rightHip && rightKnee && rightAnkle) {
+                angles.rightKnee = calculateAngle(rightHip, rightKnee, rightAnkle);
+            }
+            
+            // 计算躯干角度（使用髋部和肩部）
+            if (leftShoulder && leftHip) {
+                // 计算躯干与垂直线的角度
+                const dx = leftShoulder.x - leftHip.x;
+                const dy = leftShoulder.y - leftHip.y;
+                angles.trunk = Math.abs(Math.atan2(dx, dy) * 180 / Math.PI);
+            }
+            
+            return angles;
+        }
+        
+        // 查找关键点
+        function findKeypoint(keypoints, part) {
+            const keypoint = keypoints.find(k => k.part === part);
+            return keypoint && keypoint.score > 0.5 ? keypoint.position : null;
+        }
+        
+        // 计算三点之间的角度
+        function calculateAngle(a, b, c) {
+            const ab = { x: b.x - a.x, y: b.y - a.y };
+            const cb = { x: b.x - c.x, y: b.y - c.y };
+            
+            const dot = (ab.x * cb.x + ab.y * cb.y);
+            const cross = (ab.x * cb.y - ab.y * cb.x);
+            
+            let angle = Math.atan2(cross, dot) * 180 / Math.PI;
+            return Math.abs(angle);
+        }
+        
+        // 显示姿势分析
+        function displayPoseAnalysis(angles) {
+            let analysisHTML = '<h3>姿势分析结果</h3>';
+            
+            if (angles.leftElbow) {
+                analysisHTML += `<div class="result-item">
+                    <span class="result-label">左肘角度</span>
+                    <span class="result-value">${angles.leftElbow.toFixed(1)}°</span>
+                </div>`;
+            }
+            
+            if (angles.rightElbow) {
+                analysisHTML += `<div class="result-item">
+                    <span class="result-label">右肘角度</span>
+                    <span class="result-value">${angles.rightElbow.toFixed(1)}°</span>
+                </div>`;
+            }
+            
+            if (angles.leftKnee) {
+                analysisHTML += `<div class="result-item">
+                    <span class="result-label">左膝角度</span>
+                    <span class="result-value">${angles.leftKnee.toFixed(1)}°</span>
+                </div>`;
+            }
+            
+            if (angles.rightKnee) {
+                analysisHTML += `<div class="result-item">
+                    <span class="result-label">右膝角度</span>
+                    <span class="result-value">${angles.rightKnee.toFixed(1)}°</span>
+                </div>`;
+            }
+            
+            if (angles.trunk) {
+                analysisHTML += `<div class="result-item">
+                    <span class="result-label">躯干角度</span>
+                    <span class="result-value">${angles.trunk.toFixed(1)}°</span>
+                </div>`;
+            }
+            
+            document.getElementById('pose-results').innerHTML += analysisHTML;
+        }
+        
+        // 生成拟合建议
+        function generateFittingSuggestions(angles) {
+            let suggestionsHTML = '<h3>自行车拟合建议</h3>';
+            
+            // 膝盖角度分析
+            const kneeAngle = angles.leftKnee || angles.rightKnee;
+            if (kneeAngle) {
+                if (kneeAngle < 25) {
+                    suggestionsHTML += `<div class="recommendation">膝盖角度较小(${kneeAngle.toFixed(1)}°)，建议稍微降低座椅高度</div>`;
+                } else if (kneeAngle > 35) {
+                    suggestionsHTML += `<div class="recommendation">膝盖角度较大(${kneeAngle.toFixed(1)}°)，建议稍微升高座椅高度</div>`;
+                } else {
+                    suggestionsHTML += `<div class="recommendation">膝盖角度良好(${kneeAngle.toFixed(1)}°)，在理想范围内(25-35°)</div>`;
                 }
             }
-            canvasCtx.restore();
+            
+            // 躯干角度分析
+            if (angles.trunk) {
+                if (angles.trunk < 40) {
+                    suggestionsHTML += `<div class="recommendation">躯干较为直立(${angles.trunk.toFixed(1)}°)，可以考虑更前倾的姿势以提高空气动力学效率</div>`;
+                } else if (angles.trunk > 50) {
+                    suggestionsHTML += `<div class="recommendation">躯干较为前倾(${angles.trunk.toFixed(1)}°)，如果感到不适可以考虑更直立的姿势</div>`;
+                } else {
+                    suggestionsHTML += `<div class="recommendation">躯干角度良好(${angles.trunk.toFixed(1)}°)，在理想范围内(40-50°)</div>`;
+                }
+            }
+            
+            // 肘部角度分析
+            const elbowAngle = angles.leftElbow || angles.rightElbow;
+            if (elbowAngle) {
+                if (elbowAngle < 150) {
+                    suggestionsHTML += `<div class="recommendation">肘部较为弯曲(${elbowAngle.toFixed(1)}°)，考虑调整车把位置以减少手臂疲劳</div>`;
+                } else if (elbowAngle > 170) {
+                    suggestionsHTML += `<div class="recommendation">肘部较为伸直(${elbowAngle.toFixed(1)}°)，考虑稍微弯曲肘部以吸收震动</div>`;
+                } else {
+                    suggestionsHTML += `<div class="recommendation">肘部角度良好(${elbowAngle.toFixed(1)}°)，在理想范围内(150-170°)</div>`;
+                }
+            }
+            
+            document.getElementById('pose-results').innerHTML += suggestionsHTML;
         }
-
-        function updateAdvice() {
-            let msg = "";
-            if (maxKneeAngle > 155) msg += "⚠️ 座墊可能太高 (膝蓋 > 155°)<br>";
-            else if (maxKneeAngle < 135) msg += "⚠️ 座墊可能太低 (膝蓋 < 135°)<br>";
-            else msg += "✅ 膝蓋伸展角度良好 (135-155°)<br>";
-
-            document.getElementById('advice-text').innerHTML = msg;
+        
+        // 基本拟合计算函数
+        function calculateBasicFitting() {
+            // 获取表单数据
+            const height = parseFloat(document.getElementById('height').value);
+            const inseam = parseFloat(document.getElementById('inseam').value);
+            const torso = parseFloat(document.getElementById('torso').value);
+            const armLength = parseFloat(document.getElementById('arm-length').value);
+            const bikeType = document.getElementById('bike-type').value;
+            const flexibility = document.getElementById('flexibility').value;
+            
+            // 验证数据
+            if (!height || !inseam || !torso || !armLength) {
+                alert('请填写所有必填字段');
+                return;
+            }
+            
+            // 计算车架尺寸
+            let frameSize;
+            switch(bikeType) {
+                case 'road':
+                    frameSize = inseam * 0.67;
+                    break;
+                case 'mountain':
+                    frameSize = inseam * 0.61;
+                    break;
+                case 'hybrid':
+                    frameSize = inseam * 0.65;
+                    break;
+                default:
+                    frameSize = inseam * 0.65;
+            }
+            
+            // 计算座椅高度
+            const saddleHeight = inseam * 0.883;
+            
+            // 计算座椅前后位置
+            const adjustmentFactor = (torso + armLength) / (height * 2);
+            let saddlePosition;
+            if (adjustmentFactor < 0.48) {
+                saddlePosition = "稍微向前";
+            } else if (adjustmentFactor > 0.52) {
+                saddlePosition = "稍微向后";
+            } else {
+                saddlePosition = "中间位置";
+            }
+            
+            // 计算车把位置
+            const reach = torso + armLength * 0.3;
+            let handlebarHeight;
+            const heightRatio = height / 100;
+            if (heightRatio < 1.6) {
+                handlebarHeight = "与座椅持平或稍低";
+            } else if (heightRatio > 1.8) {
+                handlebarHeight = "比座椅低5-10cm";
+            } else {
+                handlebarHeight = "比座椅低2-5cm";
+            }
+            
+            // 生成结果HTML
+            const bikeTypeNames = {
+                'road': '公路自行车',
+                'mountain': '山地自行车',
+                'hybrid': '混合自行车'
+            };
+            
+            let resultsHTML = `
+                <div class="result-item">
+                    <span class="result-label">推荐车架尺寸 (${bikeTypeNames[bikeType]})</span>
+                    <span class="result-value">${frameSize.toFixed(1)} cm</span>
+                </div>
+                <div class="result-item">
+                    <span class="result-label">座椅高度建议</span>
+                    <span class="result-value">${saddleHeight.toFixed(1)} cm</span>
+                </div>
+                <div class="result-item">
+                    <span class="result-label">座椅前后位置</span>
+                    <span class="result-value">${saddlePosition}</span>
+                </div>
+                <div class="result-item">
+                    <span class="result-label">车把伸展距离</span>
+                    <span class="result-value">${reach.toFixed(1)} cm</span>
+                </div>
+                <div class="result-item">
+                    <span class="result-label">车把高度建议</span>
+                    <span class="result-value">${handlebarHeight}</span>
+                </div>
+            `;
+            
+            // 额外建议
+            let extraRecommendations = '';
+            
+            if (height < 160) {
+                extraRecommendations += '<div class="recommendation">考虑使用650c车轮的自行车</div>';
+            } else if (height > 190) {
+                extraRecommendations += '<div class="recommendation">考虑使用29英寸车轮的山地自行车</div>';
+            }
+            
+            const inseamRatio = inseam / height;
+            if (inseamRatio < 0.45) {
+                extraRecommendations += '<div class="recommendation">您的腿相对较短，可能需要更直立的骑行姿势</div>';
+            } else if (inseamRatio > 0.48) {
+                extraRecommendations += '<div class="recommendation">您的腿相对较长，可能需要更前倾的骑行姿势</div>';
+            }
+            
+            // 根据灵活性调整
+            if (flexibility === 'low') {
+                extraRecommendations += '<div class="recommendation">由于灵活性较低，建议使用更直立的骑行姿势和更高的车把</div>';
+            } else if (flexibility === 'high') {
+                extraRecommendations += '<div class="recommendation">由于灵活性较高，您可以尝试更激进的空气动力学姿势</div>';
+            }
+            
+            if (extraRecommendations) {
+                resultsHTML += '<h3 style="margin-top: 20px;">额外建议</h3>' + extraRecommendations;
+            }
+            
+            // 显示结果
+            document.getElementById('basic-results').innerHTML = resultsHTML;
+            
+            // 生成完整报告
+            generateFullReport(height, inseam, torso, armLength, bikeType, flexibility);
         }
-
+        
+        // 生成完整报告
+        function generateFullReport(height, inseam, torso, armLength, bikeType, flexibility) {
+            const reportHTML = `
+                <h3>综合拟合报告</h3>
+                <p>基于您的身体测量数据和动态分析，我们为您生成以下完整的自行车拟合建议：</p>
+                
+                <div class="result-item">
+                    <span class="result-label">身体比例评估</span>
+                    <span class="result-value">${(inseam/height > 0.47 ? '腿长型' : '躯干型')}</span>
+                </div>
+                
+                <div class="result-item">
+                    <span class="result-label">推荐骑行姿势</span>
+                    <span class="result-value">${flexibility === 'high' ? '空气动力学姿势' : '舒适型姿势'}</span>
+                </div>
+                
+                <h4 style="margin-top: 20px;">具体调整建议</h4>
+                <div class="recommendation">
+                    <p>1. 将座椅高度设置为 ${(inseam * 0.883).toFixed(1)} cm，然后根据动态分析微调</p>
+                </div>
+                <div class="recommendation">
+                    <p>2. 调整座椅前后位置，确保膝盖在踏板轴正上方时，胫骨与地面垂直</p>
+                </div>
+                <div class="recommendation">
+                    <p>3. 车把宽度应与肩宽相匹配，通常为 ${(armLength * 0.85).toFixed(1)} - ${(armLength * 0.95).toFixed(1)} cm</p>
+                </div>
+                
+                <h4 style="margin-top: 20px;">下一步建议</h4>
+                <div class="recommendation">
+                    <p>• 在实际骑行中微调设置，记录每次调整后的舒适度</p>
+                    <p>• 考虑使用专业的自行车拟合服务进行精确调整</p>
+                    <p>• 定期检查自行车设置，特别是长途骑行后</p>
+                </div>
+            `;
+            
+            document.getElementById('full-report').innerHTML = reportHTML;
+        }
+        
+        // 初始化页面
+        window.addEventListener('load', function() {
+            // 设置默认值（可选）
+            document.getElementById('height').value = 175;
+            document.getElementById('inseam').value = 80;
+            document.getElementById('torso').value = 50;
+            document.getElementById('arm-length').value = 60;
+            
+            // 预加载PoseNet模型
+            loadPoseNetModel();
+        });
     </script>
 </body>
 </html>
