@@ -3,110 +3,171 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bike Fit Assistant AI</title>
+    <title>Bike Fit Assistant AI (Debug Ver.)</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
-    <script src="https://cdn.jsdelivr.com/npm/@mediapipe/camera_utils/camera_utils.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
     
     <style>
-        body { font-family: 'Arial', sans-serif; background-color: #1e1e1e; color: white; margin: 0; display: flex; flex-direction: column; align-items: center; overflow: hidden; }
+        body { font-family: 'Arial', sans-serif; background-color: #1e1e1e; color: white; margin: 0; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
         h2 { margin: 10px 0; font-size: 1.2rem; text-align: center; }
-        .container { position: relative; width: 100%; max-width: 640px; height: 55vh; background: black; border-radius: 10px; overflow: hidden; }
-        video { display: none; }
+        
+        .container { position: relative; width: 100%; max-width: 640px; height: 50vh; background: #000; border-radius: 10px; overflow: hidden; margin-bottom: 10px; }
+        video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; display: none; } /* 隱藏原始影像，只顯示 canvas */
         canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
         
-        /* 儀表板樣式 */
-        .dashboard { width: 100%; max-width: 640px; background: #333; padding: 10px; box-sizing: border-box; border-top: 2px solid #555; display: flex; justify-content: space-around; align-items: center; flex-wrap: wrap; }
-        .metric { text-align: center; flex: 1; min-width: 45%; margin-bottom: 10px;} /* 讓每個 metric 佔一半寬 */
-        .metric-value { font-size: 1.8rem; font-weight: bold; color: #00d4ff; }
-        .metric-label { font-size: 0.8rem; color: #aaa; }
-        #max-knee-angle-val { color: #00ff88; }
-        #max-torso-angle-val { color: #ffeb3b; } /* 軀幹角度用不同顏色 */
+        /* 控制區 */
+        .controls { width: 90%; max-width: 640px; margin-bottom: 10px; display: flex; gap: 10px; }
+        button { flex: 1; padding: 12px; border: none; border-radius: 5px; font-size: 1rem; cursor: pointer; font-weight: bold; }
+        #btn-start { background-color: #00d4ff; color: #000; }
+        #btn-reset { background-color: #ff4757; color: white; }
         
-        /* 重置按鈕 */
-        .reset-btn { background-color: #ff4757; color: white; border: none; padding: 10px 20px; border-radius: 5px; font-size: 1rem; cursor: pointer; margin-top: 5px; width: 90%; }
-        .reset-btn:active { background-color: #ff6b81; }
-
-        .loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.7); padding: 20px; border-radius: 10px; z-index: 100; text-align: center; }
-
-        .advice-box {
-            width: 100%;
-            max-width: 640px;
-            background: #444;
-            padding: 10px 15px;
-            box-sizing: border-box;
-            margin-top: 5px;
-            border-radius: 8px;
-            font-size: 0.9rem;
-            color: #ccc;
-            min-height: 80px;
-        }
-        .advice-title { font-weight: bold; color: #fff; margin-bottom: 5px; }
-        .advice-text { color: #f0f0f0; }
+        /* 數據儀表板 */
+        .dashboard { width: 100%; max-width: 640px; background: #333; padding: 10px; border-radius: 8px; display: flex; flex-wrap: wrap; justify-content: space-around; }
+        .metric { text-align: center; width: 45%; margin: 5px 0; }
+        .metric-value { font-size: 1.5rem; font-weight: bold; color: #fff; }
+        .metric-label { font-size: 0.8rem; color: #aaa; }
+        
+        /* 錯誤訊息顯示區 */
+        #error-log { color: #ff4757; font-size: 0.9rem; padding: 10px; text-align: center; width: 90%; word-break: break-all; }
+        
+        /* 建議區 */
+        .advice { width: 90%; max-width: 640px; margin-top: 10px; background: #444; padding: 10px; border-radius: 8px; font-size: 0.9rem; color: #ddd; }
     </style>
 </head>
 <body>
 
-    <h2>🚴 Bike Fit AI (Right Side)</h2>
+    <h2>🚴 Bike Fit AI V2</h2>
+
+    <div class="controls">
+        <button id="btn-start" onclick="startCamera()">📸 開啟相機</button>
+        <button id="btn-reset" onclick="resetData()">🔄 重置數據</button>
+    </div>
+    
+    <div id="error-log"></div>
 
     <div class="container">
-        <div class="loading" id="loading">模型載入中...<br>請允許相機權限</div>
-        <video id="input_video" playsinline></video>
+        <video id="input_video" playsinline muted></video>
         <canvas id="output_canvas"></canvas>
     </div>
 
     <div class="dashboard">
         <div class="metric">
-            <div class="metric-value" id="current-knee-angle">--</div>
-            <div class="metric-label">即時膝蓋角</div>
+            <div class="metric-label">膝蓋角度</div>
+            <div class="metric-value" id="val-knee">--</div>
         </div>
         <div class="metric">
-            <div class="metric-value" id="max-knee-angle-val">--</div>
-            <div class="metric-label">下死點 (最大)</div>
+            <div class="metric-label">最大延伸 (下死點)</div>
+            <div class="metric-value" style="color: #00ff88;" id="val-max-knee">--</div>
         </div>
         <div class="metric">
-            <div class="metric-value" id="current-torso-angle">--</div>
-            <div class="metric-label">即時軀幹角</div>
+            <div class="metric-label">軀幹角度</div>
+            <div class="metric-value" id="val-torso">--</div>
         </div>
         <div class="metric">
-            <div class="metric-value" id="max-torso-angle-val">--</div>
-            <div class="metric-label">最佳軀幹角</div>
+            <div class="metric-label">平均軀幹角</div>
+            <div class="metric-value" style="color: #ffeb3b;" id="val-avg-torso">--</div>
         </div>
-        <button class="reset-btn" onclick="resetData()">🔄 重置數據</button>
     </div>
 
-    <div class="advice-box">
-        <div class="advice-title">調整建議:</div>
-        <div class="advice-text" id="advice-text">請開始踩踏以獲取分析數據。</div>
+    <div class="advice" id="advice-text">
+        點擊上方「開啟相機」按鈕開始。請給予相機權限。
     </div>
 
     <script>
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
         const canvasCtx = canvasElement.getContext('2d');
-        const loadingMsg = document.getElementById('loading');
-        
-        // 數據顯示 DOM
-        const currentKneeAngleDisplay = document.getElementById('current-knee-angle');
-        const maxKneeAngleDisplay = document.getElementById('max-knee-angle-val');
-        const currentTorsoAngleDisplay = document.getElementById('current-torso-angle');
-        const maxTorsoAngleDisplay = document.getElementById('max-torso-angle-val');
-        const adviceText = document.getElementById('advice-text');
+        const errorLog = document.getElementById('error-log');
+        const btnStart = document.getElementById('btn-start');
 
-        let maxKneeAngle = 0; // 紀錄最大膝蓋延伸角度 (下死點)
-        let maxTorsoAngle = 0; // 紀錄最佳軀幹角度 (通常是踩踏時最穩定的角度)
+        let pose;
+        let cameraRunning = false;
+        let animationId;
+
+        // 數據變數
+        let maxKneeAngle = 0;
+        let torsoAngleSum = 0;
+        let torsoCount = 0;
+
+        function logError(msg) {
+            errorLog.innerText = "⚠️ " + msg;
+            console.error(msg);
+        }
 
         function resetData() {
             maxKneeAngle = 0;
-            maxTorsoAngle = 0;
-            currentKneeAngleDisplay.innerText = "--";
-            maxKneeAngleDisplay.innerText = "--";
-            currentTorsoAngleDisplay.innerText = "--";
-            maxTorsoAngleDisplay.innerText = "--";
-            adviceText.innerText = "請開始踩踏以獲取分析數據。";
+            torsoAngleSum = 0;
+            torsoCount = 0;
+            document.getElementById('val-max-knee').innerText = "--";
+            document.getElementById('val-avg-torso').innerText = "--";
+            document.getElementById('advice-text').innerText = "數據已重置";
         }
 
-        // 計算三點角度的數學函式 (頂點 B)
+        // 核心運算迴圈
+        async function predict() {
+            if (!cameraRunning) return;
+
+            // 確保影片有載入
+            if (videoElement.readyState === 4) {
+                // 設定 Canvas 大小
+                canvasElement.width = videoElement.videoWidth;
+                canvasElement.height = videoElement.videoHeight;
+                
+                // 送入 MediaPipe 處理
+                await pose.send({image: videoElement});
+            }
+            
+            // 繼續下一幀
+            animationId = requestAnimationFrame(predict);
+        }
+
+        async function startCamera() {
+            if (cameraRunning) return;
+            errorLog.innerText = "正在啟動相機...";
+            
+            try {
+                // 初始化 MediaPipe
+                if (!pose) {
+                    pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+                    pose.setOptions({
+                        modelComplexity: 1,
+                        smoothLandmarks: true,
+                        minDetectionConfidence: 0.5,
+                        minTrackingConfidence: 0.5
+                    });
+                    pose.onResults(onResults);
+                }
+
+                // 原生 getUserMedia 呼叫 (比 Camera Utils 更穩定)
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { 
+                        facingMode: 'environment', // 優先使用後鏡頭
+                        width: { ideal: 640 },
+                        height: { ideal: 480 }
+                    },
+                    audio: false
+                });
+
+                videoElement.srcObject = stream;
+                
+                // 等待影片載入
+                videoElement.onloadedmetadata = () => {
+                    videoElement.play();
+                    cameraRunning = true;
+                    btnStart.innerText = "相機運作中";
+                    btnStart.disabled = true;
+                    errorLog.innerText = "";
+                    predict(); // 開始迴圈
+                };
+
+            } catch (err) {
+                let msg = "相機啟動失敗: " + err.name;
+                if (err.name === 'NotAllowedError') msg = "您拒絕了相機權限，請重整網頁並允許。";
+                if (err.name === 'NotFoundError') msg = "找不到相機裝置。";
+                logError(msg + " (" + err.message + ")");
+            }
+        }
+
         function calculateAngle(a, b, c) {
             let radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
             let angle = Math.abs(radians * 180.0 / Math.PI);
@@ -114,134 +175,66 @@
             return angle;
         }
 
-        // 計算軀幹角度的特殊函式 (髖部到肩膀與水平線的夾角)
-        function calculateTorsoAngle(hip, shoulder) {
-            // 建立一個假設的水平點 (在髖部前方)
-            const horizontalPoint = {x: hip.x - 0.1, y: hip.y}; // 假設水平點在髖部左側一點點
-            return calculateAngle(horizontalPoint, hip, shoulder);
-        }
-
-        // 根據角度給出建議
-        function getFitAdvice(kneeAngle, torsoAngle) {
-            let advice = [];
-
-            // 膝蓋角度建議 (一般公路車下死點建議 140-150 度)
-            if (kneeAngle === 0) { // 初始狀態
-                advice.push("請保持穩定踩踏，以便收集數據。");
-            } else if (kneeAngle > 155) {
-                advice.push("膝蓋延伸過度 (角度 > 155°)，座墊可能太高，或曲柄太長。");
-            } else if (kneeAngle < 135 && kneeAngle > 0) { // 排除初始0度
-                advice.push("膝蓋彎曲過多 (角度 < 135°)，座墊可能太低。");
-            } else if (kneeAngle >= 135 && kneeAngle <= 155) {
-                advice.push("膝蓋延伸角度良好 (135°-155°)。");
-            }
-
-            // 軀幹角度建議 (一般公路車建議 40-55 度之間，這裡的測量是「背部與水平線的夾角」)
-            // 這個角度定義方式會影響建議值，目前是肩-髖-水平，約40-55度為競賽，55-65為舒適
-            if (torsoAngle > 65) {
-                advice.push("軀幹角度較直 (> 65°)，可能過於休閒或握把位置太高，可以考慮降低把手或增長龍頭。");
-            } else if (torsoAngle < 40 && torsoAngle > 0) {
-                advice.push("軀幹角度過低 (< 40°)，可能過於激進，身體負擔較大，可能需要提高把手或縮短龍頭。");
-            } else if (torsoAngle >= 40 && torsoAngle <= 65) {
-                advice.push("軀幹角度在舒適範圍 (40°-65°)。");
-            }
-
-            if (advice.length === 0) {
-                return "正在分析中...";
-            } else {
-                return advice.join("<br>");
-            }
-        }
-
-
-        // MediaPipe 結果處理
         function onResults(results) {
-            loadingMsg.style.display = 'none';
-            canvasElement.width = videoElement.videoWidth;
-            canvasElement.height = videoElement.videoHeight;
-
             canvasCtx.save();
             canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
             canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
             if (results.poseLandmarks) {
                 drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
-                drawLandmarks(canvasCtx, results.poseLandmarks, {color: '#FF0000', lineWidth: 1});
+                
+                // 取得關鍵點 (右側)
+                const p = results.poseLandmarks;
+                const rShoulder = p[12], rHip = p[24], rKnee = p[26], rAnkle = p[28];
 
-                // 右側關鍵點：12(右肩), 24(右髖), 26(右膝), 28(右踝)
-                const shoulder = results.poseLandmarks[12];
-                const hip = results.poseLandmarks[24];
-                const knee = results.poseLandmarks[26];
-                const ankle = results.poseLandmarks[28];
-
-                // 信心度過濾
-                const minVisibility = 0.6; // 調整信心度門檻
-                if (shoulder.visibility > minVisibility && hip.visibility > minVisibility && 
-                    knee.visibility > minVisibility && ankle.visibility > minVisibility) {
+                // 檢查是否都在畫面中
+                if (rShoulder.visibility > 0.5 && rHip.visibility > 0.5 && rKnee.visibility > 0.5 && rAnkle.visibility > 0.5) {
                     
-                    // 計算膝蓋角度
-                    let currentKneeAngle = calculateAngle(hip, knee, ankle);
-                    currentKneeAngleDisplay.innerText = Math.round(currentKneeAngle) + "°";
+                    // 1. 膝蓋角度
+                    let kAngle = calculateAngle(rHip, rKnee, rAnkle);
+                    document.getElementById('val-knee').innerText = Math.round(kAngle) + "°";
 
-                    // 更新最大膝蓋角度 (只在合理的範圍內更新，避免初期誤判)
-                    if (currentKneeAngle > maxKneeAngle && currentKneeAngle < 175 && currentKneeAngle > 100) {
-                        maxKneeAngle = currentKneeAngle;
-                        maxKneeAngleDisplay.innerText = Math.round(maxKneeAngle) + "°";
+                    // 更新最大膝蓋角 (簡單濾波)
+                    if (kAngle > maxKneeAngle && kAngle < 175 && kAngle > 100) {
+                        maxKneeAngle = kAngle;
+                        document.getElementById('val-max-knee').innerText = Math.round(maxKneeAngle) + "°";
+                        updateAdvice();
                     }
 
-                    // 計算軀幹角度 (肩-髖-水平線)
-                    let currentTorsoAngle = calculateTorsoAngle(hip, shoulder);
-                    currentTorsoAngleDisplay.innerText = Math.round(currentTorsoAngle) + "°";
+                    // 2. 軀幹角度 (肩-髖-水平)
+                    // 虛擬水平點
+                    let tAngle = calculateAngle({x: rHip.x - 0.5, y: rHip.y}, rHip, rShoulder);
+                    document.getElementById('val-torso').innerText = Math.round(tAngle) + "°";
 
-                    // 更新最大軀幹角度 (這裡的 "max" 代表觀察到最平穩的平均值，而非真的最大值)
-                    // 為了簡化，這裡一樣用 max，但實際 fitting 會找穩定區間
-                    if (currentTorsoAngle > maxTorsoAngle && currentTorsoAngle < 120 && currentTorsoAngle > 10) {
-                        maxTorsoAngle = currentTorsoAngle;
-                        maxTorsoAngleDisplay.innerText = Math.round(maxTorsoAngle) + "°";
+                    // 計算平均軀幹角 (簡單平均)
+                    if (tAngle > 10 && tAngle < 100) {
+                        torsoAngleSum += tAngle;
+                        torsoCount++;
+                        let avgTorso = torsoAngleSum / torsoCount;
+                        document.getElementById('val-avg-torso').innerText = Math.round(avgTorso) + "°";
                     }
-                    
-                    // 繪製膝蓋角度標籤
-                    const kx = knee.x * canvasElement.width;
-                    const ky = knee.y * canvasElement.height;
-                    canvasCtx.font = "bold 24px Arial";
+
+                    // 繪製文字
+                    canvasCtx.font = "24px Arial";
                     canvasCtx.fillStyle = "#00ff88";
-                    canvasCtx.fillText(Math.round(currentKneeAngle) + "°", kx + 15, ky - 20);
-
-                    // 繪製軀幹角度標籤 (在髖部上方)
-                    const hx = hip.x * canvasElement.width;
-                    const hy = hip.y * canvasElement.height;
+                    canvasCtx.fillText(Math.round(kAngle) + "°", rKnee.x * canvasElement.width + 10, rKnee.y * canvasElement.height);
+                    
                     canvasCtx.fillStyle = "#ffeb3b";
-                    canvasCtx.fillText(Math.round(currentTorsoAngle) + "°", hx + 15, hy - 20);
-
-                    // 更新建議
-                    adviceText.innerHTML = getFitAdvice(maxKneeAngle, maxTorsoAngle);
-
-                    // 強調關鍵點
-                    [shoulder, hip, knee, ankle].forEach(pt => {
-                        canvasCtx.beginPath();
-                        canvasCtx.arc(pt.x * canvasElement.width, pt.y * canvasElement.height, 5, 0, 2 * Math.PI);
-                        canvasCtx.fillStyle = "red";
-                        canvasCtx.fill();
-                    });
-
-                } else {
-                     adviceText.innerHTML = "偵測中...請確保身體關鍵部位清晰可見。";
+                    canvasCtx.fillText(Math.round(tAngle) + "°", rHip.x * canvasElement.width + 10, rHip.y * canvasElement.height);
                 }
-            } else {
-                adviceText.innerHTML = "偵測中...請確保身體關鍵部位清晰可見。";
             }
             canvasCtx.restore();
         }
 
-        const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
-        pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-        pose.onResults(onResults);
+        function updateAdvice() {
+            let msg = "";
+            if (maxKneeAngle > 155) msg += "⚠️ 座墊可能太高 (膝蓋 > 155°)<br>";
+            else if (maxKneeAngle < 135) msg += "⚠️ 座墊可能太低 (膝蓋 < 135°)<br>";
+            else msg += "✅ 膝蓋伸展角度良好 (135-155°)<br>";
 
-        const camera = new Camera(videoElement, {
-            onFrame: async () => { await pose.send({image: videoElement}); },
-            width: 640, height: 480, facingMode: "environment"
-        });
-        camera.start();
+            document.getElementById('advice-text').innerHTML = msg;
+        }
+
     </script>
 </body>
 </html>
