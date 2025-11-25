@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>自行车动态拟合系统 - 后置摄像头版</title>
+    <title>自行车动态拟合系统 - 实时角度分析版</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/posenet"></script>
     <style>
@@ -340,6 +340,41 @@
             margin: 5px 0;
         }
         
+        .real-time-angles {
+            background: #e8f6f3;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 15px;
+        }
+        
+        .angle-display {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .angle-item {
+            background: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            min-width: 120px;
+        }
+        
+        .angle-value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--primary);
+            text-align: center;
+        }
+        
+        .angle-label {
+            font-size: 0.9rem;
+            text-align: center;
+            color: var(--dark);
+        }
+        
         @media (max-width: 768px) {
             .grid {
                 grid-template-columns: 1fr;
@@ -359,6 +394,10 @@
             
             .tab {
                 text-align: center;
+            }
+            
+            .angle-display {
+                justify-content: center;
             }
         }
         
@@ -397,8 +436,8 @@
 <body>
     <div class="container">
         <header>
-            <h1>自行车动态拟合系统 - 后置摄像头版</h1>
-            <p class="subtitle">使用后置摄像头进行更精准的自行车动态拟合分析</p>
+            <h1>自行车动态拟合系统 - 实时角度分析版</h1>
+            <p class="subtitle">使用后置摄像头进行实时角度分析与动态拟合</p>
         </header>
         
         <div class="tabs">
@@ -513,6 +552,32 @@
                     <p>当前摄像头: <span id="camera-type">未启动</span></p>
                 </div>
                 
+                <div class="real-time-angles">
+                    <h3>实时角度分析</h3>
+                    <div class="angle-display" id="angle-display">
+                        <div class="angle-item">
+                            <div class="angle-value" id="left-knee-angle">--°</div>
+                            <div class="angle-label">左膝角度</div>
+                        </div>
+                        <div class="angle-item">
+                            <div class="angle-value" id="right-knee-angle">--°</div>
+                            <div class="angle-label">右膝角度</div>
+                        </div>
+                        <div class="angle-item">
+                            <div class="angle-value" id="left-elbow-angle">--°</div>
+                            <div class="angle-label">左肘角度</div>
+                        </div>
+                        <div class="angle-item">
+                            <div class="angle-value" id="right-elbow-angle">--°</div>
+                            <div class="angle-label">右肘角度</div>
+                        </div>
+                        <div class="angle-item">
+                            <div class="angle-value" id="trunk-angle">--°</div>
+                            <div class="angle-label">躯干角度</div>
+                        </div>
+                    </div>
+                </div>
+                
                 <div id="debug-panel" class="debug-panel hidden">
                     <p><strong>调试信息:</strong></p>
                     <div id="debug-info"></div>
@@ -548,6 +613,7 @@
         let capturedPose = null;
         let debugMode = false;
         let currentFacingMode = 'environment'; // 默认使用后置摄像头
+        let realTimeAngles = {};
         
         // 切换标签页
         document.querySelectorAll('.tab').forEach(tab => {
@@ -720,6 +786,9 @@
             updateDetectionInfo('摄像头已停止', 0, 0);
             document.getElementById('camera-type').textContent = '未启动';
             updateDebugInfo('摄像头已停止');
+            
+            // 重置实时角度显示
+            resetRealTimeAngles();
         }
         
         // 姿态检测
@@ -748,6 +817,12 @@
                     drawKeypoints(mainPose.keypoints, 0.2, ctx);
                     drawSkeleton(mainPose.keypoints, 0.2, ctx);
                     
+                    // 计算实时角度
+                    realTimeAngles = calculatePoseAngles(mainPose.keypoints);
+                    
+                    // 更新实时角度显示
+                    updateRealTimeAngles(realTimeAngles);
+                    
                     // 计算平均置信度
                     const avgConfidence = calculateAverageConfidence(mainPose.keypoints);
                     updateDetectionInfo('检测到人体', poses.length, avgConfidence);
@@ -756,6 +831,9 @@
                 } else {
                     updateDetectionInfo('未检测到人体', 0, 0);
                     updateDebugInfo('未检测到人体');
+                    
+                    // 重置实时角度显示
+                    resetRealTimeAngles();
                 }
                 
             } catch (error) {
@@ -892,7 +970,7 @@
             document.getElementById('pose-results').innerHTML = keypointsHTML;
         }
         
-        // 分析姿势
+        // 分析姿势 - 修复后的函数
         function analyzePose() {
             if (!capturedPose) {
                 alert('请先捕捉姿势');
@@ -974,6 +1052,48 @@
             
             let angle = Math.atan2(cross, dot) * 180 / Math.PI;
             return Math.abs(angle);
+        }
+        
+        // 更新实时角度显示
+        function updateRealTimeAngles(angles) {
+            if (angles.leftKnee) {
+                document.getElementById('left-knee-angle').textContent = `${angles.leftKnee.toFixed(1)}°`;
+            } else {
+                document.getElementById('left-knee-angle').textContent = '--°';
+            }
+            
+            if (angles.rightKnee) {
+                document.getElementById('right-knee-angle').textContent = `${angles.rightKnee.toFixed(1)}°`;
+            } else {
+                document.getElementById('right-knee-angle').textContent = '--°';
+            }
+            
+            if (angles.leftElbow) {
+                document.getElementById('left-elbow-angle').textContent = `${angles.leftElbow.toFixed(1)}°`;
+            } else {
+                document.getElementById('left-elbow-angle').textContent = '--°';
+            }
+            
+            if (angles.rightElbow) {
+                document.getElementById('right-elbow-angle').textContent = `${angles.rightElbow.toFixed(1)}°`;
+            } else {
+                document.getElementById('right-elbow-angle').textContent = '--°';
+            }
+            
+            if (angles.trunk) {
+                document.getElementById('trunk-angle').textContent = `${angles.trunk.toFixed(1)}°`;
+            } else {
+                document.getElementById('trunk-angle').textContent = '--°';
+            }
+        }
+        
+        // 重置实时角度显示
+        function resetRealTimeAngles() {
+            document.getElementById('left-knee-angle').textContent = '--°';
+            document.getElementById('right-knee-angle').textContent = '--°';
+            document.getElementById('left-elbow-angle').textContent = '--°';
+            document.getElementById('right-elbow-angle').textContent = '--°';
+            document.getElementById('trunk-angle').textContent = '--°';
         }
         
         // 显示姿势分析
