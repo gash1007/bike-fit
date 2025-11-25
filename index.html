@@ -5,28 +5,44 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bike Fit Assistant AI</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.com/npm/@mediapipe/camera_utils/camera_utils.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
     
     <style>
         body { font-family: 'Arial', sans-serif; background-color: #1e1e1e; color: white; margin: 0; display: flex; flex-direction: column; align-items: center; overflow: hidden; }
         h2 { margin: 10px 0; font-size: 1.2rem; text-align: center; }
-        .container { position: relative; width: 100%; max-width: 640px; height: 65vh; background: black; border-radius: 10px; overflow: hidden; }
+        .container { position: relative; width: 100%; max-width: 640px; height: 55vh; background: black; border-radius: 10px; overflow: hidden; }
         video { display: none; }
         canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
         
         /* 儀表板樣式 */
-        .dashboard { width: 100%; max-width: 640px; background: #333; padding: 10px; box-sizing: border-box; border-top: 2px solid #555; display: flex; justify-content: space-around; align-items: center; height: 25vh; flex-wrap: wrap; }
-        .metric { text-align: center; flex: 1; }
-        .metric-value { font-size: 2rem; font-weight: bold; color: #00d4ff; }
-        .metric-label { font-size: 0.9rem; color: #aaa; }
-        #max-angle-val { color: #00ff88; }
+        .dashboard { width: 100%; max-width: 640px; background: #333; padding: 10px; box-sizing: border-box; border-top: 2px solid #555; display: flex; justify-content: space-around; align-items: center; flex-wrap: wrap; }
+        .metric { text-align: center; flex: 1; min-width: 45%; margin-bottom: 10px;} /* 讓每個 metric 佔一半寬 */
+        .metric-value { font-size: 1.8rem; font-weight: bold; color: #00d4ff; }
+        .metric-label { font-size: 0.8rem; color: #aaa; }
+        #max-knee-angle-val { color: #00ff88; }
+        #max-torso-angle-val { color: #ffeb3b; } /* 軀幹角度用不同顏色 */
         
         /* 重置按鈕 */
         .reset-btn { background-color: #ff4757; color: white; border: none; padding: 10px 20px; border-radius: 5px; font-size: 1rem; cursor: pointer; margin-top: 5px; width: 90%; }
         .reset-btn:active { background-color: #ff6b81; }
 
         .loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.7); padding: 20px; border-radius: 10px; z-index: 100; text-align: center; }
+
+        .advice-box {
+            width: 100%;
+            max-width: 640px;
+            background: #444;
+            padding: 10px 15px;
+            box-sizing: border-box;
+            margin-top: 5px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            color: #ccc;
+            min-height: 80px;
+        }
+        .advice-title { font-weight: bold; color: #fff; margin-bottom: 5px; }
+        .advice-text { color: #f0f0f0; }
     </style>
 </head>
 <body>
@@ -41,14 +57,27 @@
 
     <div class="dashboard">
         <div class="metric">
-            <div class="metric-value" id="current-angle">--</div>
-            <div class="metric-label">即時角度</div>
+            <div class="metric-value" id="current-knee-angle">--</div>
+            <div class="metric-label">即時膝蓋角</div>
         </div>
         <div class="metric">
-            <div class="metric-value" id="max-angle-val">--</div>
+            <div class="metric-value" id="max-knee-angle-val">--</div>
             <div class="metric-label">下死點 (最大)</div>
         </div>
-        <button class="reset-btn" onclick="resetMax()">🔄 重置數據</button>
+        <div class="metric">
+            <div class="metric-value" id="current-torso-angle">--</div>
+            <div class="metric-label">即時軀幹角</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="max-torso-angle-val">--</div>
+            <div class="metric-label">最佳軀幹角</div>
+        </div>
+        <button class="reset-btn" onclick="resetData()">🔄 重置數據</button>
+    </div>
+
+    <div class="advice-box">
+        <div class="advice-title">調整建議:</div>
+        <div class="advice-text" id="advice-text">請開始踩踏以獲取分析數據。</div>
     </div>
 
     <script>
@@ -56,17 +85,28 @@
         const canvasElement = document.getElementById('output_canvas');
         const canvasCtx = canvasElement.getContext('2d');
         const loadingMsg = document.getElementById('loading');
-        const currentAngleDisplay = document.getElementById('current-angle');
-        const maxAngleDisplay = document.getElementById('max-angle-val');
+        
+        // 數據顯示 DOM
+        const currentKneeAngleDisplay = document.getElementById('current-knee-angle');
+        const maxKneeAngleDisplay = document.getElementById('max-knee-angle-val');
+        const currentTorsoAngleDisplay = document.getElementById('current-torso-angle');
+        const maxTorsoAngleDisplay = document.getElementById('max-torso-angle-val');
+        const adviceText = document.getElementById('advice-text');
 
-        let maxAngle = 0;
+        let maxKneeAngle = 0; // 紀錄最大膝蓋延伸角度 (下死點)
+        let maxTorsoAngle = 0; // 紀錄最佳軀幹角度 (通常是踩踏時最穩定的角度)
 
-        function resetMax() {
-            maxAngle = 0;
-            maxAngleDisplay.innerText = "--";
-            currentAngleDisplay.innerText = "--";
+        function resetData() {
+            maxKneeAngle = 0;
+            maxTorsoAngle = 0;
+            currentKneeAngleDisplay.innerText = "--";
+            maxKneeAngleDisplay.innerText = "--";
+            currentTorsoAngleDisplay.innerText = "--";
+            maxTorsoAngleDisplay.innerText = "--";
+            adviceText.innerText = "請開始踩踏以獲取分析數據。";
         }
 
+        // 計算三點角度的數學函式 (頂點 B)
         function calculateAngle(a, b, c) {
             let radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
             let angle = Math.abs(radians * 180.0 / Math.PI);
@@ -74,6 +114,47 @@
             return angle;
         }
 
+        // 計算軀幹角度的特殊函式 (髖部到肩膀與水平線的夾角)
+        function calculateTorsoAngle(hip, shoulder) {
+            // 建立一個假設的水平點 (在髖部前方)
+            const horizontalPoint = {x: hip.x - 0.1, y: hip.y}; // 假設水平點在髖部左側一點點
+            return calculateAngle(horizontalPoint, hip, shoulder);
+        }
+
+        // 根據角度給出建議
+        function getFitAdvice(kneeAngle, torsoAngle) {
+            let advice = [];
+
+            // 膝蓋角度建議 (一般公路車下死點建議 140-150 度)
+            if (kneeAngle === 0) { // 初始狀態
+                advice.push("請保持穩定踩踏，以便收集數據。");
+            } else if (kneeAngle > 155) {
+                advice.push("膝蓋延伸過度 (角度 > 155°)，座墊可能太高，或曲柄太長。");
+            } else if (kneeAngle < 135 && kneeAngle > 0) { // 排除初始0度
+                advice.push("膝蓋彎曲過多 (角度 < 135°)，座墊可能太低。");
+            } else if (kneeAngle >= 135 && kneeAngle <= 155) {
+                advice.push("膝蓋延伸角度良好 (135°-155°)。");
+            }
+
+            // 軀幹角度建議 (一般公路車建議 40-55 度之間，這裡的測量是「背部與水平線的夾角」)
+            // 這個角度定義方式會影響建議值，目前是肩-髖-水平，約40-55度為競賽，55-65為舒適
+            if (torsoAngle > 65) {
+                advice.push("軀幹角度較直 (> 65°)，可能過於休閒或握把位置太高，可以考慮降低把手或增長龍頭。");
+            } else if (torsoAngle < 40 && torsoAngle > 0) {
+                advice.push("軀幹角度過低 (< 40°)，可能過於激進，身體負擔較大，可能需要提高把手或縮短龍頭。");
+            } else if (torsoAngle >= 40 && torsoAngle <= 65) {
+                advice.push("軀幹角度在舒適範圍 (40°-65°)。");
+            }
+
+            if (advice.length === 0) {
+                return "正在分析中...";
+            } else {
+                return advice.join("<br>");
+            }
+        }
+
+
+        // MediaPipe 結果處理
         function onResults(results) {
             loadingMsg.style.display = 'none';
             canvasElement.width = videoElement.videoWidth;
@@ -84,42 +165,70 @@
             canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
             if (results.poseLandmarks) {
-                // 繪製骨架
                 drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
-                
-                // 右側關鍵點：24(髖), 26(膝), 28(踝)
+                drawLandmarks(canvasCtx, results.poseLandmarks, {color: '#FF0000', lineWidth: 1});
+
+                // 右側關鍵點：12(右肩), 24(右髖), 26(右膝), 28(右踝)
+                const shoulder = results.poseLandmarks[12];
                 const hip = results.poseLandmarks[24];
                 const knee = results.poseLandmarks[26];
                 const ankle = results.poseLandmarks[28];
 
                 // 信心度過濾
-                if (hip.visibility > 0.6 && knee.visibility > 0.6 && ankle.visibility > 0.6) {
-                    let angle = calculateAngle(hip, knee, ankle);
+                const minVisibility = 0.6; // 調整信心度門檻
+                if (shoulder.visibility > minVisibility && hip.visibility > minVisibility && 
+                    knee.visibility > minVisibility && ankle.visibility > minVisibility) {
                     
-                    // 顯示即時角度
-                    currentAngleDisplay.innerText = Math.round(angle) + "°";
+                    // 計算膝蓋角度
+                    let currentKneeAngle = calculateAngle(hip, knee, ankle);
+                    currentKneeAngleDisplay.innerText = Math.round(currentKneeAngle) + "°";
 
-                    // 更新最大角度 (簡單過濾：角度需大於100且小於175才視為有效騎乘動作)
-                    if (angle > maxAngle && angle < 175 && angle > 100) {
-                        maxAngle = angle;
-                        maxAngleDisplay.innerText = Math.round(maxAngle) + "°";
+                    // 更新最大膝蓋角度 (只在合理的範圍內更新，避免初期誤判)
+                    if (currentKneeAngle > maxKneeAngle && currentKneeAngle < 175 && currentKneeAngle > 100) {
+                        maxKneeAngle = currentKneeAngle;
+                        maxKneeAngleDisplay.innerText = Math.round(maxKneeAngle) + "°";
                     }
 
-                    // 繪製標籤
+                    // 計算軀幹角度 (肩-髖-水平線)
+                    let currentTorsoAngle = calculateTorsoAngle(hip, shoulder);
+                    currentTorsoAngleDisplay.innerText = Math.round(currentTorsoAngle) + "°";
+
+                    // 更新最大軀幹角度 (這裡的 "max" 代表觀察到最平穩的平均值，而非真的最大值)
+                    // 為了簡化，這裡一樣用 max，但實際 fitting 會找穩定區間
+                    if (currentTorsoAngle > maxTorsoAngle && currentTorsoAngle < 120 && currentTorsoAngle > 10) {
+                        maxTorsoAngle = currentTorsoAngle;
+                        maxTorsoAngleDisplay.innerText = Math.round(maxTorsoAngle) + "°";
+                    }
+                    
+                    // 繪製膝蓋角度標籤
                     const kx = knee.x * canvasElement.width;
                     const ky = knee.y * canvasElement.height;
-                    canvasCtx.font = "bold 30px Arial";
+                    canvasCtx.font = "bold 24px Arial";
                     canvasCtx.fillStyle = "#00ff88";
-                    canvasCtx.fillText(Math.round(angle) + "°", kx + 20, ky);
-                    
+                    canvasCtx.fillText(Math.round(currentKneeAngle) + "°", kx + 15, ky - 20);
+
+                    // 繪製軀幹角度標籤 (在髖部上方)
+                    const hx = hip.x * canvasElement.width;
+                    const hy = hip.y * canvasElement.height;
+                    canvasCtx.fillStyle = "#ffeb3b";
+                    canvasCtx.fillText(Math.round(currentTorsoAngle) + "°", hx + 15, hy - 20);
+
+                    // 更新建議
+                    adviceText.innerHTML = getFitAdvice(maxKneeAngle, maxTorsoAngle);
+
                     // 強調關鍵點
-                    [hip, knee, ankle].forEach(pt => {
+                    [shoulder, hip, knee, ankle].forEach(pt => {
                         canvasCtx.beginPath();
                         canvasCtx.arc(pt.x * canvasElement.width, pt.y * canvasElement.height, 5, 0, 2 * Math.PI);
                         canvasCtx.fillStyle = "red";
                         canvasCtx.fill();
                     });
+
+                } else {
+                     adviceText.innerHTML = "偵測中...請確保身體關鍵部位清晰可見。";
                 }
+            } else {
+                adviceText.innerHTML = "偵測中...請確保身體關鍵部位清晰可見。";
             }
             canvasCtx.restore();
         }
