@@ -153,6 +153,7 @@
             height: auto;
             background: #000;
             border-radius: 10px;
+            transform: scaleX(-1); /* 镜像翻转，使体验更自然 */
         }
         
         #output {
@@ -289,6 +290,29 @@
             border-top: 1px solid #ddd;
         }
         
+        .detection-info {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
+        
+        .detection-count {
+            font-weight: bold;
+            color: var(--primary);
+        }
+        
+        .debug-panel {
+            background: #f1f1f1;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 15px;
+            font-family: monospace;
+            font-size: 0.9rem;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
         @media (max-width: 768px) {
             .grid {
                 grid-template-columns: 1fr;
@@ -328,6 +352,18 @@
         
         .hidden {
             display: none;
+        }
+        
+        .detection-guide {
+            background: #e8f4fd;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
+        
+        .detection-guide ul {
+            margin-left: 20px;
+            margin-top: 10px;
         }
     </style>
 </head>
@@ -397,13 +433,18 @@
         <div class="tab-content" id="camera-tab">
             <div class="card">
                 <h2 class="card-title">动态捕捉分析</h2>
-                <p>使用手机摄像头捕捉您的骑行姿势。请确保：</p>
-                <ul style="margin: 10px 0 20px 20px;">
-                    <li>在光线充足的环境下使用</li>
-                    <li>侧身站立，使摄像头能看到您的全身侧面</li>
-                    <li>穿着紧身衣物以便更准确识别关节点</li>
-                    <li>模拟骑行姿势或使用静态自行车</li>
-                </ul>
+                
+                <div class="detection-guide">
+                    <p><strong>检测提示：</strong>如果系统无法检测到人体，请尝试以下方法：</p>
+                    <ul>
+                        <li>确保在光线充足的环境下使用</li>
+                        <li>确保全身在摄像头画面中</li>
+                        <li>尝试调整与摄像头的距离（1.5-3米最佳）</li>
+                        <li>穿着与背景对比明显的衣物</li>
+                        <li>避免过于复杂的背景</li>
+                        <li>尝试不同的姿势（正面或侧面）</li>
+                    </ul>
+                </div>
                 
                 <div class="status status-loading" id="model-status">
                     <span class="loading"></span>正在加载AI姿态估计模型...
@@ -414,11 +455,23 @@
                     <button id="stop-camera" class="btn btn-danger" disabled>停止摄像头</button>
                     <button id="capture-pose" class="btn btn-secondary" disabled>捕捉姿势</button>
                     <button id="analyze-pose" class="btn" disabled>分析姿势</button>
+                    <button id="debug-toggle" class="btn">调试信息</button>
                 </div>
                 
                 <div class="video-container">
                     <video id="video" autoplay playsinline></video>
                     <canvas id="output"></canvas>
+                </div>
+                
+                <div id="detection-info" class="detection-info">
+                    <p>检测状态: <span id="detection-status">等待摄像头启动</span></p>
+                    <p>检测到的人数: <span id="detection-count" class="detection-count">0</span></p>
+                    <p>关键点置信度: <span id="keypoint-confidence">0%</span></p>
+                </div>
+                
+                <div id="debug-panel" class="debug-panel hidden">
+                    <p><strong>调试信息:</strong></p>
+                    <div id="debug-info"></div>
                 </div>
                 
                 <div id="pose-results">
@@ -449,6 +502,8 @@
         let isModelLoaded = false;
         let isCameraOn = false;
         let capturedPose = null;
+        let debugMode = false;
+        let detectionHistory = [];
         
         // 切换标签页
         document.querySelectorAll('.tab').forEach(tab => {
@@ -480,6 +535,7 @@
         document.getElementById('stop-camera').addEventListener('click', stopCamera);
         document.getElementById('capture-pose').addEventListener('click', capturePose);
         document.getElementById('analyze-pose').addEventListener('click', analyzePose);
+        document.getElementById('debug-toggle').addEventListener('click', toggleDebug);
         
         // 加载PoseNet模型
         async function loadPoseNetModel() {
@@ -487,12 +543,13 @@
                 document.getElementById('model-status').className = 'status status-loading';
                 document.getElementById('model-status').innerHTML = '<span class="loading"></span>正在加载AI姿态估计模型...';
                 
-                // 加载PoseNet模型
+                // 加载PoseNet模型 - 使用更宽松的参数提高检测率
                 poseNet = await posenet.load({
                     architecture: 'MobileNetV1',
                     outputStride: 16,
-                    inputResolution: 257,
-                    multiplier: 0.75
+                    inputResolution: { width: 640, height: 480 },
+                    multiplier: 0.5, // 降低乘数以提高性能
+                    quantBytes: 2
                 });
                 
                 isModelLoaded = true;
@@ -500,10 +557,12 @@
                 document.getElementById('model-status').textContent = '✓ AI姿态估计模型加载成功！';
                 
                 console.log('PoseNet模型加载成功');
+                updateDebugInfo('模型加载成功');
             } catch (error) {
                 console.error('PoseNet模型加载失败:', error);
                 document.getElementById('model-status').className = 'status status-error';
                 document.getElementById('model-status').textContent = '✗ AI姿态估计模型加载失败，请刷新页面重试';
+                updateDebugInfo('模型加载失败: ' + error.message);
             }
         }
         
@@ -516,7 +575,7 @@
                 // 获取摄像头权限
                 videoStream = await navigator.mediaDevices.getUserMedia({ 
                     video: { 
-                        facingMode: 'environment',
+                        facingMode: 'user', // 使用前置摄像头
                         width: { ideal: 640 },
                         height: { ideal: 480 }
                     }, 
@@ -525,9 +584,15 @@
                 
                 video.srcObject = videoStream;
                 
-                // 设置Canvas尺寸
-                output.width = video.videoWidth;
-                output.height = video.videoHeight;
+                // 等待视频数据加载
+                await new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        // 设置Canvas尺寸
+                        output.width = video.videoWidth;
+                        output.height = video.videoHeight;
+                        resolve();
+                    };
+                });
                 
                 isCameraOn = true;
                 document.getElementById('start-camera').disabled = true;
@@ -535,12 +600,16 @@
                 document.getElementById('capture-pose').disabled = false;
                 document.getElementById('analyze-pose').disabled = false;
                 
+                updateDetectionInfo('摄像头已启动', 0, 0);
+                updateDebugInfo('摄像头启动成功，分辨率: ' + video.videoWidth + 'x' + video.videoHeight);
+                
                 // 开始姿态检测
                 detectPose();
                 
             } catch (error) {
                 console.error('摄像头启动失败:', error);
-                alert('无法访问摄像头，请确保已授予摄像头权限并重试。');
+                alert('无法访问摄像头，请确保已授予摄像头权限并重试。错误: ' + error.message);
+                updateDebugInfo('摄像头启动失败: ' + error.message);
             }
         }
         
@@ -564,6 +633,9 @@
             const output = document.getElementById('output');
             const ctx = output.getContext('2d');
             ctx.clearRect(0, 0, output.width, output.height);
+            
+            updateDetectionInfo('摄像头已停止', 0, 0);
+            updateDebugInfo('摄像头已停止');
         }
         
         // 姿态检测
@@ -574,25 +646,58 @@
             const output = document.getElementById('output');
             const ctx = output.getContext('2d');
             
-            // 检测姿态
-            poses = await poseNet.estimatePoses(video, {
-                flipHorizontal: false,
-                maxDetections: 1,
-                scoreThreshold: 0.5,
-                nmsRadius: 20
-            });
-            
-            // 清空Canvas
-            ctx.clearRect(0, 0, output.width, output.height);
-            
-            // 绘制关键点
-            if (poses.length > 0) {
-                drawKeypoints(poses[0].keypoints, 0.5, ctx);
-                drawSkeleton(poses[0].keypoints, 0.5, ctx);
+            try {
+                // 检测姿态 - 使用更宽松的参数
+                poses = await poseNet.estimatePoses(video, {
+                    flipHorizontal: true, // 由于视频是镜像的，需要水平翻转
+                    maxDetections: 5,     // 增加最大检测人数
+                    scoreThreshold: 0.2,  // 降低置信度阈值以提高检测率
+                    nmsRadius: 30         // 增加非最大抑制半径
+                });
+                
+                // 清空Canvas
+                ctx.clearRect(0, 0, output.width, output.height);
+                
+                // 绘制关键点
+                if (poses.length > 0) {
+                    const mainPose = poses[0]; // 使用置信度最高的姿势
+                    drawKeypoints(mainPose.keypoints, 0.2, ctx);
+                    drawSkeleton(mainPose.keypoints, 0.2, ctx);
+                    
+                    // 计算平均置信度
+                    const avgConfidence = calculateAverageConfidence(mainPose.keypoints);
+                    updateDetectionInfo('检测到人体', poses.length, avgConfidence);
+                    
+                    updateDebugInfo(`检测到 ${poses.length} 个人体，主要姿势置信度: ${(mainPose.score * 100).toFixed(1)}%`);
+                } else {
+                    updateDetectionInfo('未检测到人体', 0, 0);
+                    updateDebugInfo('未检测到人体');
+                }
+                
+            } catch (error) {
+                console.error('姿态检测错误:', error);
+                updateDebugInfo('姿态检测错误: ' + error.message);
             }
             
             // 继续检测
             requestAnimationFrame(detectPose);
+        }
+        
+        // 计算关键点平均置信度
+        function calculateAverageConfidence(keypoints) {
+            if (!keypoints || keypoints.length === 0) return 0;
+            
+            let totalScore = 0;
+            let validPoints = 0;
+            
+            keypoints.forEach(keypoint => {
+                if (keypoint.score > 0.2) { // 只计算置信度高于阈值的点
+                    totalScore += keypoint.score;
+                    validPoints++;
+                }
+            });
+            
+            return validPoints > 0 ? (totalScore / validPoints) * 100 : 0;
         }
         
         // 绘制关键点
@@ -607,18 +712,47 @@
                 const { y, x } = keypoint.position;
                 
                 ctx.beginPath();
-                ctx.arc(x, y, 4, 0, 2 * Math.PI);
-                ctx.fillStyle = 'red';
+                ctx.arc(x, y, 5, 0, 2 * Math.PI);
+                ctx.fillStyle = getKeypointColor(keypoint.part);
                 ctx.fill();
+                
+                // 绘制关键点标签
+                ctx.fillStyle = 'white';
+                ctx.font = '12px Arial';
+                ctx.fillText(keypoint.part, x + 8, y + 4);
             }
+        }
+        
+        // 根据关键点部位返回颜色
+        function getKeypointColor(part) {
+            const colorMap = {
+                'nose': '#FF0000',
+                'leftEye': '#00FF00',
+                'rightEye': '#00FF00',
+                'leftEar': '#0000FF',
+                'rightEar': '#0000FF',
+                'leftShoulder': '#FFFF00',
+                'rightShoulder': '#FFFF00',
+                'leftElbow': '#FF00FF',
+                'rightElbow': '#FF00FF',
+                'leftWrist': '#00FFFF',
+                'rightWrist': '#00FFFF',
+                'leftHip': '#FFA500',
+                'rightHip': '#FFA500',
+                'leftKnee': '#800080',
+                'rightKnee': '#800080',
+                'leftAnkle': '#008000',
+                'rightAnkle': '#008000'
+            };
+            
+            return colorMap[part] || '#FFFFFF';
         }
         
         // 绘制骨架
         function drawSkeleton(keypoints, minConfidence, ctx, scale = 1) {
             const adjacentKeyPoints = posenet.getAdjacentKeyPoints(keypoints, minConfidence);
             
-            ctx.strokeStyle = 'green';
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 3;
             
             adjacentKeyPoints.forEach((keypoints) => {
                 drawSegment(
@@ -631,6 +765,7 @@
             ctx.beginPath();
             ctx.moveTo(ax, ay);
             ctx.lineTo(bx, by);
+            ctx.strokeStyle = '#00FF00';
             ctx.stroke();
         }
         
@@ -648,8 +783,10 @@
                 displayCapturedPose();
                 
                 document.getElementById('analyze-pose').disabled = false;
+                updateDebugInfo('姿势已捕捉，置信度: ' + (capturedPose.score * 100).toFixed(1) + '%');
             } else {
                 alert('未检测到人体姿态，请确保全身在摄像头范围内且光线充足。');
+                updateDebugInfo('捕捉姿势失败：未检测到人体');
             }
         }
         
@@ -661,7 +798,7 @@
             
             // 只显示高置信度的关键点
             capturedPose.keypoints.forEach(keypoint => {
-                if (keypoint.score > 0.5) {
+                if (keypoint.score > 0.3) {
                     keypointsHTML += `<div class="keypoint">${keypoint.part}: ${(keypoint.score * 100).toFixed(1)}%</div>`;
                 }
             });
@@ -686,6 +823,8 @@
             
             // 生成拟合建议
             generateFittingSuggestions(angles);
+            
+            updateDebugInfo('姿势分析完成');
         }
         
         // 计算姿势角度
@@ -738,7 +877,7 @@
         // 查找关键点
         function findKeypoint(keypoints, part) {
             const keypoint = keypoints.find(k => k.part === part);
-            return keypoint && keypoint.score > 0.5 ? keypoint.position : null;
+            return keypoint && keypoint.score > 0.3 ? keypoint.position : null;
         }
         
         // 计算三点之间的角度
@@ -835,6 +974,46 @@
             }
             
             document.getElementById('pose-results').innerHTML += suggestionsHTML;
+        }
+        
+        // 更新检测信息
+        function updateDetectionInfo(status, count, confidence) {
+            document.getElementById('detection-status').textContent = status;
+            document.getElementById('detection-count').textContent = count;
+            document.getElementById('keypoint-confidence').textContent = confidence.toFixed(1) + '%';
+        }
+        
+        // 更新调试信息
+        function updateDebugInfo(message) {
+            if (!debugMode) return;
+            
+            const debugInfo = document.getElementById('debug-info');
+            const timestamp = new Date().toLocaleTimeString();
+            const debugEntry = `<div>${timestamp}: ${message}</div>`;
+            
+            debugInfo.innerHTML = debugEntry + debugInfo.innerHTML;
+            
+            // 保持调试信息数量不超过20条
+            const entries = debugInfo.getElementsByTagName('div');
+            if (entries.length > 20) {
+                debugInfo.removeChild(entries[entries.length - 1]);
+            }
+        }
+        
+        // 切换调试模式
+        function toggleDebug() {
+            debugMode = !debugMode;
+            const debugPanel = document.getElementById('debug-panel');
+            const debugButton = document.getElementById('debug-toggle');
+            
+            if (debugMode) {
+                debugPanel.classList.remove('hidden');
+                debugButton.textContent = '隐藏调试信息';
+                updateDebugInfo('调试模式已开启');
+            } else {
+                debugPanel.classList.add('hidden');
+                debugButton.textContent = '调试信息';
+            }
         }
         
         // 基本拟合计算函数
