@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bike Fit Assistant AI</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    
+    <style>
+        body { font-family: 'Arial', sans-serif; background-color: #1e1e1e; color: white; margin: 0; display: flex; flex-direction: column; align-items: center; overflow: hidden; }
+        h2 { margin: 10px 0; font-size: 1.2rem; text-align: center; }
+        .container { position: relative; width: 100%; max-width: 640px; height: 65vh; background: black; border-radius: 10px; overflow: hidden; }
+        video { display: none; }
+        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+        
+        /* 儀表板樣式 */
+        .dashboard { width: 100%; max-width: 640px; background: #333; padding: 10px; box-sizing: border-box; border-top: 2px solid #555; display: flex; justify-content: space-around; align-items: center; height: 25vh; flex-wrap: wrap; }
+        .metric { text-align: center; flex: 1; }
+        .metric-value { font-size: 2rem; font-weight: bold; color: #00d4ff; }
+        .metric-label { font-size: 0.9rem; color: #aaa; }
+        #max-angle-val { color: #00ff88; }
+        
+        /* 重置按鈕 */
+        .reset-btn { background-color: #ff4757; color: white; border: none; padding: 10px 20px; border-radius: 5px; font-size: 1rem; cursor: pointer; margin-top: 5px; width: 90%; }
+        .reset-btn:active { background-color: #ff6b81; }
+
+        .loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.7); padding: 20px; border-radius: 10px; z-index: 100; text-align: center; }
+    </style>
+</head>
+<body>
+
+    <h2>🚴 Bike Fit AI (Right Side)</h2>
+
+    <div class="container">
+        <div class="loading" id="loading">模型載入中...<br>請允許相機權限</div>
+        <video id="input_video" playsinline></video>
+        <canvas id="output_canvas"></canvas>
+    </div>
+
+    <div class="dashboard">
+        <div class="metric">
+            <div class="metric-value" id="current-angle">--</div>
+            <div class="metric-label">即時角度</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="max-angle-val">--</div>
+            <div class="metric-label">下死點 (最大)</div>
+        </div>
+        <button class="reset-btn" onclick="resetMax()">🔄 重置數據</button>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const loadingMsg = document.getElementById('loading');
+        const currentAngleDisplay = document.getElementById('current-angle');
+        const maxAngleDisplay = document.getElementById('max-angle-val');
+
+        let maxAngle = 0;
+
+        function resetMax() {
+            maxAngle = 0;
+            maxAngleDisplay.innerText = "--";
+            currentAngleDisplay.innerText = "--";
+        }
+
+        function calculateAngle(a, b, c) {
+            let radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+            let angle = Math.abs(radians * 180.0 / Math.PI);
+            if (angle > 180.0) angle = 360 - angle;
+            return angle;
+        }
+
+        function onResults(results) {
+            loadingMsg.style.display = 'none';
+            canvasElement.width = videoElement.videoWidth;
+            canvasElement.height = videoElement.videoHeight;
+
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.poseLandmarks) {
+                // 繪製骨架
+                drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
+                
+                // 右側關鍵點：24(髖), 26(膝), 28(踝)
+                const hip = results.poseLandmarks[24];
+                const knee = results.poseLandmarks[26];
+                const ankle = results.poseLandmarks[28];
+
+                // 信心度過濾
+                if (hip.visibility > 0.6 && knee.visibility > 0.6 && ankle.visibility > 0.6) {
+                    let angle = calculateAngle(hip, knee, ankle);
+                    
+                    // 顯示即時角度
+                    currentAngleDisplay.innerText = Math.round(angle) + "°";
+
+                    // 更新最大角度 (簡單過濾：角度需大於100且小於175才視為有效騎乘動作)
+                    if (angle > maxAngle && angle < 175 && angle > 100) {
+                        maxAngle = angle;
+                        maxAngleDisplay.innerText = Math.round(maxAngle) + "°";
+                    }
+
+                    // 繪製標籤
+                    const kx = knee.x * canvasElement.width;
+                    const ky = knee.y * canvasElement.height;
+                    canvasCtx.font = "bold 30px Arial";
+                    canvasCtx.fillStyle = "#00ff88";
+                    canvasCtx.fillText(Math.round(angle) + "°", kx + 20, ky);
+                    
+                    // 強調關鍵點
+                    [hip, knee, ankle].forEach(pt => {
+                        canvasCtx.beginPath();
+                        canvasCtx.arc(pt.x * canvasElement.width, pt.y * canvasElement.height, 5, 0, 2 * Math.PI);
+                        canvasCtx.fillStyle = "red";
+                        canvasCtx.fill();
+                    });
+                }
+            }
+            canvasCtx.restore();
+        }
+
+        const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+        pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        pose.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => { await pose.send({image: videoElement}); },
+            width: 640, height: 480, facingMode: "environment"
+        });
+        camera.start();
+    </script>
+</body>
+</html>
