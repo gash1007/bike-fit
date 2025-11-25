@@ -329,6 +329,17 @@
             font-size: 0.9rem;
         }
         
+        .camera-selection {
+            background: #fff3cd;
+            padding: 10px 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
+        
+        .camera-option {
+            margin: 5px 0;
+        }
+        
         @media (max-width: 768px) {
             .grid {
                 grid-template-columns: 1fr;
@@ -466,6 +477,18 @@
                     <p><strong>当前使用：后置摄像头</strong> - 后置摄像头通常提供更高的分辨率和更准确的姿态检测</p>
                 </div>
                 
+                <div class="camera-selection">
+                    <p><strong>摄像头选择：</strong></p>
+                    <div class="camera-option">
+                        <input type="radio" id="camera-back" name="camera" value="environment" checked>
+                        <label for="camera-back">后置摄像头 (推荐)</label>
+                    </div>
+                    <div class="camera-option">
+                        <input type="radio" id="camera-front" name="camera" value="user">
+                        <label for="camera-front">前置摄像头</label>
+                    </div>
+                </div>
+                
                 <div class="status status-loading" id="model-status">
                     <span class="loading"></span>正在加载AI姿态估计模型...
                 </div>
@@ -473,7 +496,6 @@
                 <div class="camera-controls">
                     <button id="start-camera" class="btn">启动摄像头</button>
                     <button id="stop-camera" class="btn btn-danger" disabled>停止摄像头</button>
-                    <button id="switch-camera" class="btn btn-warning">切换摄像头</button>
                     <button id="capture-pose" class="btn btn-secondary" disabled>捕捉姿势</button>
                     <button id="analyze-pose" class="btn" disabled>分析姿势</button>
                     <button id="debug-toggle" class="btn">调试信息</button>
@@ -526,8 +548,6 @@
         let capturedPose = null;
         let debugMode = false;
         let currentFacingMode = 'environment'; // 默认使用后置摄像头
-        let cameras = [];
-        let currentCameraIndex = 0;
         
         // 切换标签页
         document.querySelectorAll('.tab').forEach(tab => {
@@ -560,7 +580,20 @@
         document.getElementById('capture-pose').addEventListener('click', capturePose);
         document.getElementById('analyze-pose').addEventListener('click', analyzePose);
         document.getElementById('debug-toggle').addEventListener('click', toggleDebug);
-        document.getElementById('switch-camera').addEventListener('click', switchCamera);
+        
+        // 摄像头选择
+        document.querySelectorAll('input[name="camera"]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                currentFacingMode = this.value;
+                updateDebugInfo(`已选择${this.value === 'environment' ? '后置' : '前置'}摄像头`);
+                
+                // 如果摄像头正在运行，重新启动
+                if (isCameraOn) {
+                    stopCamera();
+                    setTimeout(startCamera, 500);
+                }
+            });
+        });
         
         // 加载PoseNet模型
         async function loadPoseNetModel() {
@@ -583,46 +616,11 @@
                 
                 console.log('PoseNet模型加载成功');
                 updateDebugInfo('模型加载成功');
-                
-                // 获取可用的摄像头列表
-                await getCameras();
             } catch (error) {
                 console.error('PoseNet模型加载失败:', error);
                 document.getElementById('model-status').className = 'status status-error';
                 document.getElementById('model-status').textContent = '✗ AI姿态估计模型加载失败，请刷新页面重试';
                 updateDebugInfo('模型加载失败: ' + error.message);
-            }
-        }
-        
-        // 获取可用的摄像头
-        async function getCameras() {
-            try {
-                const devices = await navigator.mediaDevices.enumerateDevices();
-                cameras = devices.filter(device => device.kind === 'videoinput');
-                
-                updateDebugInfo(`找到 ${cameras.length} 个摄像头`);
-                
-                // 尝试找到后置摄像头
-                let rearCameraIndex = -1;
-                for (let i = 0; i < cameras.length; i++) {
-                    if (cameras[i].label.toLowerCase().includes('back') || 
-                        cameras[i].label.toLowerCase().includes('rear') ||
-                        cameras[i].label.toLowerCase().includes('environment')) {
-                        rearCameraIndex = i;
-                        break;
-                    }
-                }
-                
-                // 如果有后置摄像头，默认使用它
-                if (rearCameraIndex !== -1) {
-                    currentCameraIndex = rearCameraIndex;
-                    updateDebugInfo('已选择后置摄像头');
-                } else {
-                    updateDebugInfo('未找到后置摄像头，将使用第一个可用摄像头');
-                }
-            } catch (error) {
-                console.error('获取摄像头列表失败:', error);
-                updateDebugInfo('获取摄像头列表失败: ' + error.message);
             }
         }
         
@@ -637,13 +635,12 @@
                     videoStream.getTracks().forEach(track => track.stop());
                 }
                 
-                // 获取摄像头权限
+                // 获取摄像头权限 - 强制使用选择的方向
                 const constraints = {
                     video: {
-                        deviceId: cameras[currentCameraIndex] ? { exact: cameras[currentCameraIndex].deviceId } : undefined,
                         width: { ideal: 1280 },
                         height: { ideal: 720 },
-                        facingMode: currentFacingMode
+                        facingMode: { exact: currentFacingMode } // 强制使用选择的方向
                     },
                     audio: false
                 };
@@ -680,8 +677,22 @@
                 
             } catch (error) {
                 console.error('摄像头启动失败:', error);
-                alert('无法访问摄像头，请确保已授予摄像头权限并重试。错误: ' + error.message);
-                updateDebugInfo('摄像头启动失败: ' + error.message);
+                
+                // 如果强制使用后置摄像头失败，尝试使用前置摄像头作为备选
+                if (currentFacingMode === 'environment') {
+                    updateDebugInfo('后置摄像头启动失败，尝试使用前置摄像头: ' + error.message);
+                    alert('后置摄像头启动失败，正在尝试使用前置摄像头...');
+                    
+                    // 切换到前置摄像头
+                    currentFacingMode = 'user';
+                    document.getElementById('camera-front').checked = true;
+                    
+                    // 重新尝试启动摄像头
+                    setTimeout(startCamera, 500);
+                } else {
+                    alert('无法访问摄像头，请确保已授予摄像头权限并重试。错误: ' + error.message);
+                    updateDebugInfo('摄像头启动失败: ' + error.message);
+                }
             }
         }
         
@@ -709,31 +720,6 @@
             updateDetectionInfo('摄像头已停止', 0, 0);
             document.getElementById('camera-type').textContent = '未启动';
             updateDebugInfo('摄像头已停止');
-        }
-        
-        // 切换摄像头
-        function switchCamera() {
-            if (!isCameraOn) {
-                alert('请先启动摄像头');
-                return;
-            }
-            
-            // 切换到下一个摄像头
-            currentCameraIndex = (currentCameraIndex + 1) % cameras.length;
-            
-            // 根据设备ID判断是前置还是后置
-            const cameraLabel = cameras[currentCameraIndex].label.toLowerCase();
-            if (cameraLabel.includes('back') || cameraLabel.includes('rear')) {
-                currentFacingMode = 'environment';
-            } else {
-                currentFacingMode = 'user';
-            }
-            
-            updateDebugInfo(`切换到摄像头: ${cameras[currentCameraIndex].label}`);
-            
-            // 重新启动摄像头
-            stopCamera();
-            setTimeout(startCamera, 500);
         }
         
         // 姿态检测
