@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>手机摄像头自行车动态拟合系统</title>
+    <title>自行车动态拟合系统 - 后置摄像头版</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/posenet"></script>
     <style>
@@ -133,6 +133,14 @@
             background: #c0392b;
         }
         
+        .btn-warning {
+            background: var(--warning);
+        }
+        
+        .btn-warning:hover {
+            background: #e67e22;
+        }
+        
         .grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -153,7 +161,7 @@
             height: auto;
             background: #000;
             border-radius: 10px;
-            transform: scaleX(-1); /* 镜像翻转，使体验更自然 */
+            /* 后置摄像头不需要镜像翻转 */
         }
         
         #output {
@@ -313,6 +321,14 @@
             overflow-y: auto;
         }
         
+        .camera-info {
+            background: #e8f4fd;
+            padding: 10px 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            font-size: 0.9rem;
+        }
+        
         @media (max-width: 768px) {
             .grid {
                 grid-template-columns: 1fr;
@@ -370,8 +386,8 @@
 <body>
     <div class="container">
         <header>
-            <h1>手机摄像头自行车动态拟合系统</h1>
-            <p class="subtitle">使用AI姿态估计进行精准自行车动态拟合分析</p>
+            <h1>自行车动态拟合系统 - 后置摄像头版</h1>
+            <p class="subtitle">使用后置摄像头进行更精准的自行车动态拟合分析</p>
         </header>
         
         <div class="tabs">
@@ -446,6 +462,10 @@
                     </ul>
                 </div>
                 
+                <div class="camera-info">
+                    <p><strong>当前使用：后置摄像头</strong> - 后置摄像头通常提供更高的分辨率和更准确的姿态检测</p>
+                </div>
+                
                 <div class="status status-loading" id="model-status">
                     <span class="loading"></span>正在加载AI姿态估计模型...
                 </div>
@@ -453,6 +473,7 @@
                 <div class="camera-controls">
                     <button id="start-camera" class="btn">启动摄像头</button>
                     <button id="stop-camera" class="btn btn-danger" disabled>停止摄像头</button>
+                    <button id="switch-camera" class="btn btn-warning">切换摄像头</button>
                     <button id="capture-pose" class="btn btn-secondary" disabled>捕捉姿势</button>
                     <button id="analyze-pose" class="btn" disabled>分析姿势</button>
                     <button id="debug-toggle" class="btn">调试信息</button>
@@ -467,6 +488,7 @@
                     <p>检测状态: <span id="detection-status">等待摄像头启动</span></p>
                     <p>检测到的人数: <span id="detection-count" class="detection-count">0</span></p>
                     <p>关键点置信度: <span id="keypoint-confidence">0%</span></p>
+                    <p>当前摄像头: <span id="camera-type">未启动</span></p>
                 </div>
                 
                 <div id="debug-panel" class="debug-panel hidden">
@@ -490,7 +512,7 @@
         </div>
         
         <footer>
-            <p>手机摄像头自行车动态拟合系统 &copy; 2023 | 基于TensorFlow.js PoseNet技术</p>
+            <p>自行车动态拟合系统 &copy; 2023 | 基于TensorFlow.js PoseNet技术</p>
         </footer>
     </div>
 
@@ -503,7 +525,9 @@
         let isCameraOn = false;
         let capturedPose = null;
         let debugMode = false;
-        let detectionHistory = [];
+        let currentFacingMode = 'environment'; // 默认使用后置摄像头
+        let cameras = [];
+        let currentCameraIndex = 0;
         
         // 切换标签页
         document.querySelectorAll('.tab').forEach(tab => {
@@ -536,6 +560,7 @@
         document.getElementById('capture-pose').addEventListener('click', capturePose);
         document.getElementById('analyze-pose').addEventListener('click', analyzePose);
         document.getElementById('debug-toggle').addEventListener('click', toggleDebug);
+        document.getElementById('switch-camera').addEventListener('click', switchCamera);
         
         // 加载PoseNet模型
         async function loadPoseNetModel() {
@@ -558,11 +583,46 @@
                 
                 console.log('PoseNet模型加载成功');
                 updateDebugInfo('模型加载成功');
+                
+                // 获取可用的摄像头列表
+                await getCameras();
             } catch (error) {
                 console.error('PoseNet模型加载失败:', error);
                 document.getElementById('model-status').className = 'status status-error';
                 document.getElementById('model-status').textContent = '✗ AI姿态估计模型加载失败，请刷新页面重试';
                 updateDebugInfo('模型加载失败: ' + error.message);
+            }
+        }
+        
+        // 获取可用的摄像头
+        async function getCameras() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                cameras = devices.filter(device => device.kind === 'videoinput');
+                
+                updateDebugInfo(`找到 ${cameras.length} 个摄像头`);
+                
+                // 尝试找到后置摄像头
+                let rearCameraIndex = -1;
+                for (let i = 0; i < cameras.length; i++) {
+                    if (cameras[i].label.toLowerCase().includes('back') || 
+                        cameras[i].label.toLowerCase().includes('rear') ||
+                        cameras[i].label.toLowerCase().includes('environment')) {
+                        rearCameraIndex = i;
+                        break;
+                    }
+                }
+                
+                // 如果有后置摄像头，默认使用它
+                if (rearCameraIndex !== -1) {
+                    currentCameraIndex = rearCameraIndex;
+                    updateDebugInfo('已选择后置摄像头');
+                } else {
+                    updateDebugInfo('未找到后置摄像头，将使用第一个可用摄像头');
+                }
+            } catch (error) {
+                console.error('获取摄像头列表失败:', error);
+                updateDebugInfo('获取摄像头列表失败: ' + error.message);
             }
         }
         
@@ -572,15 +632,23 @@
                 const video = document.getElementById('video');
                 const output = document.getElementById('output');
                 
+                // 停止当前摄像头流
+                if (videoStream) {
+                    videoStream.getTracks().forEach(track => track.stop());
+                }
+                
                 // 获取摄像头权限
-                videoStream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { 
-                        facingMode: 'user', // 使用前置摄像头
-                        width: { ideal: 640 },
-                        height: { ideal: 480 }
-                    }, 
-                    audio: false 
-                });
+                const constraints = {
+                    video: {
+                        deviceId: cameras[currentCameraIndex] ? { exact: cameras[currentCameraIndex].deviceId } : undefined,
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 },
+                        facingMode: currentFacingMode
+                    },
+                    audio: false
+                };
+                
+                videoStream = await navigator.mediaDevices.getUserMedia(constraints);
                 
                 video.srcObject = videoStream;
                 
@@ -600,8 +668,12 @@
                 document.getElementById('capture-pose').disabled = false;
                 document.getElementById('analyze-pose').disabled = false;
                 
+                // 更新摄像头类型显示
+                const cameraType = currentFacingMode === 'environment' ? '后置摄像头' : '前置摄像头';
+                document.getElementById('camera-type').textContent = cameraType;
+                
                 updateDetectionInfo('摄像头已启动', 0, 0);
-                updateDebugInfo('摄像头启动成功，分辨率: ' + video.videoWidth + 'x' + video.videoHeight);
+                updateDebugInfo(`摄像头启动成功，使用${cameraType}，分辨率: ${video.videoWidth}x${video.videoHeight}`);
                 
                 // 开始姿态检测
                 detectPose();
@@ -635,7 +707,33 @@
             ctx.clearRect(0, 0, output.width, output.height);
             
             updateDetectionInfo('摄像头已停止', 0, 0);
+            document.getElementById('camera-type').textContent = '未启动';
             updateDebugInfo('摄像头已停止');
+        }
+        
+        // 切换摄像头
+        function switchCamera() {
+            if (!isCameraOn) {
+                alert('请先启动摄像头');
+                return;
+            }
+            
+            // 切换到下一个摄像头
+            currentCameraIndex = (currentCameraIndex + 1) % cameras.length;
+            
+            // 根据设备ID判断是前置还是后置
+            const cameraLabel = cameras[currentCameraIndex].label.toLowerCase();
+            if (cameraLabel.includes('back') || cameraLabel.includes('rear')) {
+                currentFacingMode = 'environment';
+            } else {
+                currentFacingMode = 'user';
+            }
+            
+            updateDebugInfo(`切换到摄像头: ${cameras[currentCameraIndex].label}`);
+            
+            // 重新启动摄像头
+            stopCamera();
+            setTimeout(startCamera, 500);
         }
         
         // 姿态检测
@@ -649,7 +747,7 @@
             try {
                 // 检测姿态 - 使用更宽松的参数
                 poses = await poseNet.estimatePoses(video, {
-                    flipHorizontal: true, // 由于视频是镜像的，需要水平翻转
+                    flipHorizontal: currentFacingMode === 'user', // 只有前置摄像头需要水平翻转
                     maxDetections: 5,     // 增加最大检测人数
                     scoreThreshold: 0.2,  // 降低置信度阈值以提高检测率
                     nmsRadius: 30         // 增加非最大抑制半径
